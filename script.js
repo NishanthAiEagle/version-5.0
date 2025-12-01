@@ -13,8 +13,8 @@ let smoothedLandmarks = null;
 let lastSnapshotDataURL = '';
 
 /* TUNABLES */
-const NECK_SCALE_MULTIPLIER   = 1.05;
-const NECK_Y_OFFSET_FACTOR    = 0.40;
+const NECK_SCALE_MULTIPLIER   = 1.15;
+const NECK_Y_OFFSET_FACTOR    = 0.95;
 const NECK_X_OFFSET_FACTOR    = 0.0;
 
 /* BodyPix settings */
