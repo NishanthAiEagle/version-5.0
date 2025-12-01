@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Overlay Jewels Try-On</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Main container -->
+  <div id="app">
+    <!-- Logo -->
+    <div id="logo">
+      <img src="logo.png" alt="Brand Logo" />
+    </div>
+
+    <!-- Video + Canvas -->
+    <div id="video-container">
+      <!-- video is used as source only; canvas displays everything -->
+      <video id="webcam" autoplay playsinline muted></video>
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <!-- Jewelry Category Buttons -->
+    <div id="jewelry-mode">
+      <button onclick="toggleCategory('gold')">Gold</button>
+      <button onclick="toggleCategory('diamond')">Diamond</button>
+      <button id="tryall-btn" onclick="toggleTryAll()">Try All</button>
+    </div>
+
+    <!-- Subcategory Buttons -->
+    <div id="subcategory-buttons" style="display: none;">
+      <button onclick="selectJewelryType('gold_earrings')">Gold Earrings</button>
+      <button onclick="selectJewelryType('gold_necklaces')">Gold Necklaces</button>
+      <button onclick="selectJewelryType('diamond_earrings')">Diamond Earrings</button>
+      <button onclick="selectJewelryType('diamond_necklaces')">Diamond Necklaces</button>
+    </div>
+
+    <!-- Jewelry Thumbnails -->
+    <div id="jewelry-options" class="options-group" style="display: none;"></div>
+
+    <!-- Snapshot Button (single photo) -->
+    <button id="snapshot-btn" onclick="takeSnapshot()">
+      <img src="camera-icon.png" alt="Snapshot" />
+    </button>
+
+    <!-- Info Button -->
+    <button id="info-btn" onclick="toggleInfoModal()">ℹ️</button>
+
+    <!-- Location Button -->
+    <a id="location-btn"
+       href="https://www.google.com/maps/place/50,+VP+St,+Vannarpet,+Coonoor,+Tamil+Nadu+643101"
+       target="_blank" rel="noopener noreferrer">
+      <img src="location_icon.png" alt="Location Icon" style="width: 40px; height: 40px;" />
+    </a>
+  </div>
+
+  <!-- Info Modal -->
+  <div id="info-modal">
+    <h3>How to Use the Try-On App</h3>
+    <div class="info-content">
+      <ul>
+        <li>Allow camera access when prompted.</li>
+        <li>Select Gold / Diamond and choose earrings or chains.</li>
+        <li>Tap a design to see it live on your face.</li>
+        <li>Use the camera icon for a single photo.</li>
+        <li>Use “Try All” to auto-change and auto-capture looks.</li>
+      </ul>
+      <button class="close-btn" onclick="toggleInfoModal()">Got it!</button>
+    </div>
+  </div>
+
+  <!-- FLASH overlay for photo effect -->
+  <div id="flash-overlay"></div>
+
+  <!-- Snapshot Modal (single capture) -->
+  <div id="snapshot-modal">
+    <img id="snapshot-preview" alt="Snapshot preview" />
+    <div class="snapshot-buttons">
+      <button onclick="saveSnapshot()">Download</button>
+      <button onclick="shareSnapshot()">Share</button>
+      <button onclick="closeSnapshotModal()">Close</button>
+    </div>
+  </div>
+
+  <!-- Gallery Modal (after TRY ALL) -->
+  <div id="gallery-modal">
+    <div class="gallery-content">
+      <button id="gallery-close">&times;</button>
+      <h2>Your Looks Gallery</h2>
+      <img id="gallery-main" src="" alt="Selected look" />
+      <div id="gallery-thumbs"></div>
+      <div class="gallery-buttons">
+        <button onclick="downloadAllImages()">Download All</button>
+        <button onclick="shareCurrentFromGallery()">Share</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- JSZip + FileSaver for ZIP download -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+  <!-- Mediapipe + main script -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
