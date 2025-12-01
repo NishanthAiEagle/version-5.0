@@ -1,4 +1,4 @@
-// script.js — with BodyPix-based occlusion (hair/face in front of necklace)
+// script.js - integrated: smoothing for jitter reduction + BodyPix occlusion + watermark + Try-All
 
 const videoElement   = document.getElementById('webcam');
 const canvasElement  = document.getElementById('overlay');
@@ -12,31 +12,33 @@ let currentType = '';
 let smoothedLandmarks = null;
 let lastSnapshotDataURL = '';
 
-/* TUNABLES */
-const NECK_SCALE_MULTIPLIER   = 1.15;
-const NECK_Y_OFFSET_FACTOR    = 0.95;
+/* TUNABLES: visual placement and smoothing */
+const NECK_SCALE_MULTIPLIER   = 1.15; // adjust chain size
+const NECK_Y_OFFSET_FACTOR    = 0.60; // move chain down (increase = lower)
 const NECK_X_OFFSET_FACTOR    = 0.0;
 
-/* BodyPix settings */
-let bodyPixNet = null;
-const BODYPIX_CONFIG = {
-  architecture: 'MobileNetV1',
-  outputStride: 16,
-  multiplier: 0.50,        // smaller model → faster
-  quantBytes: 2
-};
-const SEGMENTATION_CONFIG = {
-  internalResolution: 'low', // low/medium/high
-  segmentationThreshold: 0.7,
-  maxDetections: 1,
-  scoreThreshold: 0.3,
-  nmsRadius: 20
-};
-// How often to run BodyPix (ms). Use 200–400 for low cost.
-const BODYPIX_THROTTLE_MS = 250;
+const POS_SMOOTH = 0.88;   // 0..1  (higher = more stable, more lag)
+const ANGLE_SMOOTH = 0.82;
+const EAR_DIST_SMOOTH = 0.90;
+const ANGLE_BUFFER_LEN = 5;
 
+/* smoothing state */
+const smoothedState = {
+  leftEar: null,
+  rightEar: null,
+  neckPoint: null,
+  angle: 0,
+  earDist: null,
+};
+const angleBuffer = [];
+
+/* BodyPix segmentation settings */
+let bodyPixNet = null;
+const BODYPIX_CONFIG = { architecture: 'MobileNetV1', outputStride: 16, multiplier: 0.50, quantBytes: 2 };
+const SEGMENTATION_CONFIG = { internalResolution: 'low', segmentationThreshold: 0.7 };
+const BODYPIX_THROTTLE_MS = 250;
 let lastBodyPixRun = 0;
-let lastPersonSegmentation = null; // Uint8Array mask
+let lastPersonSegmentation = null;
 
 /* TRY ALL + Gallery */
 let autoTryRunning = false;
@@ -74,7 +76,7 @@ function loadImage(src) {
 async function changeEarring(src) { earringSrc = src; const img = await loadImage(src); if (img) earringImg = img; }
 async function changeNecklace(src) { necklaceSrc = src; const img = await loadImage(src); if (img) necklaceImg = img; }
 
-/* CATEGORY / UI (unchanged helpers) */
+/* CATEGORY / UI */
 function toggleCategory(category) {
   document.getElementById('subcategory-buttons').style.display = 'flex';
   const subButtons = document.querySelectorAll('#subcategory-buttons button');
@@ -123,61 +125,55 @@ function insertJewelryOptions(type, containerId, startIndex, endIndex) {
   }
 }
 
-/* MEDIAPIPE FaceMesh */
-const faceMesh = new FaceMesh({
-  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
-});
+/* Mediapipe FaceMesh */
+const faceMesh = new FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
 faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
 
-/* ===== Helper: run BodyPix segmentation (throttled) ===== */
+/* Helpers: normalized -> pixel */
+function toPxX(normX) { return normX * canvasElement.width; }
+function toPxY(normY) { return normY * canvasElement.height; }
+
+/* BodyPix loader & throttle */
 async function ensureBodyPixLoaded() {
   if (bodyPixNet) return;
-  bodyPixNet = await bodyPix.load(BODYPIX_CONFIG); // load model
+  bodyPixNet = await bodyPix.load(BODYPIX_CONFIG);
   console.log("BodyPix loaded");
 }
-
 async function runBodyPixIfNeeded() {
   const now = performance.now();
   if (!bodyPixNet) return;
   if (now - lastBodyPixRun < BODYPIX_THROTTLE_MS) return;
   lastBodyPixRun = now;
-
-  // run a quick person segmentation on the video element
   try {
     const seg = await bodyPixNet.segmentPerson(videoElement, SEGMENTATION_CONFIG);
-    // seg.data is Uint8Array of 0/1 per pixel (width*height)
-    lastPersonSegmentation = {
-      data: seg.data,
-      width: seg.width,
-      height: seg.height
-    };
+    lastPersonSegmentation = { data: seg.data, width: seg.width, height: seg.height };
   } catch (e) {
     console.warn("BodyPix segment error:", e);
   }
 }
 
-/* ===== Updated: draw video into canvas then overlays + occlusion ===== */
+/* ================= main results handler (smoothing + occlusion) ================= */
 faceMesh.onResults(async (results) => {
-  // sync canvas size to video (important)
+  // sync canvas size
   if (videoElement.videoWidth && videoElement.videoHeight) {
     canvasElement.width  = videoElement.videoWidth;
     canvasElement.height = videoElement.videoHeight;
   }
 
-  // draw video frame into canvas first
+  // draw video frame
   canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
   try { canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height); }
   catch (e) { console.warn("Video draw failed:", e); }
 
-  // if face detected? prepare smoothed landmarks
   if (!results.multiFaceLandmarks || !results.multiFaceLandmarks.length) {
     smoothedLandmarks = null;
-    // still draw watermark for visual cue
     drawWatermark(canvasCtx);
     return;
   }
 
   const landmarks = results.multiFaceLandmarks[0];
+
+  // per-landmark smoothing (light)
   if (!smoothedLandmarks) smoothedLandmarks = landmarks;
   else {
     smoothedLandmarks = smoothedLandmarks.map((prev, i) => ({
@@ -187,23 +183,63 @@ faceMesh.onResults(async (results) => {
     }));
   }
 
-  // DRAW JEWELRY ON TOP of video (for now)
-  drawJewelry(smoothedLandmarks, canvasCtx);
+  // derive pixel geometry
+  const leftEarPx  = { x: toPxX(smoothedLandmarks[132].x), y: toPxY(smoothedLandmarks[132].y) };
+  const rightEarPx = { x: toPxX(smoothedLandmarks[361].x), y: toPxY(smoothedLandmarks[361].y) };
+  const neckPx     = { x: toPxX(smoothedLandmarks[152].x), y: toPxY(smoothedLandmarks[152].y) };
 
-  // Throttle BodyPix and run segmentation in background
+  const earDistPx = Math.hypot(rightEarPx.x - leftEarPx.x, rightEarPx.y - leftEarPx.y);
+  const rawAngle = Math.atan2(rightEarPx.y - leftEarPx.y, rightEarPx.x - leftEarPx.x);
+
+  // smooth earDist
+  if (smoothedState.earDist === null) smoothedState.earDist = earDistPx;
+  else smoothedState.earDist = smoothedState.earDist * EAR_DIST_SMOOTH + earDistPx * (1 - EAR_DIST_SMOOTH);
+
+  // lerp helper
+  function lerpPoint(a, b, alpha) { return { x: a.x * alpha + b.x * (1 - alpha), y: a.y * alpha + b.y * (1 - alpha) }; }
+
+  if (!smoothedState.leftEar) {
+    smoothedState.leftEar = leftEarPx;
+    smoothedState.rightEar = rightEarPx;
+    smoothedState.neckPoint = neckPx;
+    smoothedState.angle = rawAngle;
+  } else {
+    smoothedState.leftEar  = lerpPoint(smoothedState.leftEar, leftEarPx, POS_SMOOTH);
+    smoothedState.rightEar = lerpPoint(smoothedState.rightEar, rightEarPx, POS_SMOOTH);
+    smoothedState.neckPoint= lerpPoint(smoothedState.neckPoint, neckPx, POS_SMOOTH);
+
+    // angle smoothing accounting for wrap
+    let aPrev = smoothedState.angle;
+    let aDiff = rawAngle - aPrev;
+    if (aDiff > Math.PI) aDiff -= 2 * Math.PI;
+    if (aDiff < -Math.PI) aDiff += 2 * Math.PI;
+    smoothedState.angle = aPrev + aDiff * (1 - ANGLE_SMOOTH);
+  }
+
+  // median-ish buffer for angle
+  angleBuffer.push(smoothedState.angle);
+  if (angleBuffer.length > ANGLE_BUFFER_LEN) angleBuffer.shift();
+  if (angleBuffer.length > 2) {
+    const sorted = angleBuffer.slice().sort((a,b)=>a-b);
+    smoothedState.angle = sorted[Math.floor(sorted.length/2)];
+  }
+
+  // draw jewelry using smoothedState
+  drawJewelryFromState(smoothedState, canvasCtx, smoothedLandmarks);
+
+  // segmentation (throttled) in background
   await ensureBodyPixLoaded();
-  runBodyPixIfNeeded(); // do not await long; segmentation will populate lastPersonSegmentation asynchronously
+  runBodyPixIfNeeded();
 
-  // If we have a recent person segmentation, composite head region over the jewelry to occlude
+  // composite occlusion if segmentation available
   if (lastPersonSegmentation && lastPersonSegmentation.data) {
     compositeHeadOcclusion(canvasCtx, smoothedLandmarks, lastPersonSegmentation);
   } else {
-    // fallback: draw watermark only if no segmentation
     drawWatermark(canvasCtx);
   }
 });
 
-/* CAMERA initialization (Mediapipe camera util) */
+/* Camera init */
 const camera = new Camera(videoElement, {
   onFrame: async () => { await faceMesh.send({ image: videoElement }); },
   width: 1280, height: 720
@@ -214,35 +250,32 @@ videoElement.addEventListener('loadedmetadata', () => {
 });
 camera.start();
 
-/* UTILS: convert normalized landmarks to px */
-function toPxX(normX) { return normX * canvasElement.width; }
-function toPxY(normY) { return normY * canvasElement.height; }
-
-/* DRAW JEWELRY (improved alignment — same as before) */
-function drawJewelry(landmarks, context) {
+/* ========== drawJewelryFromState (uses smoothed state) ========== */
+function drawJewelryFromState(state, context, landmarksForScale) {
   const ctx = context || canvasCtx;
   const cw = ctx.canvas.width; const ch = ctx.canvas.height;
 
-  const leftEar = { x: toPxX(landmarks[132].x), y: toPxY(landmarks[132].y) };
-  const rightEar = { x: toPxX(landmarks[361].x), y: toPxY(landmarks[361].y) };
-  const neckPoint = { x: toPxX(landmarks[152].x), y: toPxY(landmarks[152].y) };
+  const leftEar = state.leftEar;
+  const rightEar = state.rightEar;
+  const neckPoint = state.neckPoint;
+  const earDist = state.earDist || Math.hypot(rightEar.x - leftEar.x, rightEar.y - leftEar.y);
+  const angle = state.angle || 0;
 
-  const earDist = Math.hypot(rightEar.x - leftEar.x, rightEar.y - leftEar.y);
-
-  if (earringImg) {
+  // earrings
+  if (earringImg && landmarksForScale) {
     const eWidth = earDist * 0.18;
     const eHeight = (earringImg.height / earringImg.width) * eWidth;
     ctx.drawImage(earringImg, leftEar.x - eWidth/2, leftEar.y - eHeight*0.15, eWidth, eHeight);
     ctx.drawImage(earringImg, rightEar.x - eWidth/2, rightEar.y - eHeight*0.15, eWidth, eHeight);
   }
 
-  if (necklaceImg) {
+  // necklace
+  if (necklaceImg && landmarksForScale) {
     const desiredWidth = earDist * NECK_SCALE_MULTIPLIER;
     const desiredHeight = (necklaceImg.height / necklaceImg.width) * desiredWidth;
     const yOffset = earDist * NECK_Y_OFFSET_FACTOR;
     const centerX = neckPoint.x + (earDist * NECK_X_OFFSET_FACTOR);
     const centerY = neckPoint.y + yOffset;
-    const angle = Math.atan2(rightEar.y - leftEar.y, rightEar.x - leftEar.x);
 
     ctx.save();
     ctx.translate(centerX, centerY);
@@ -250,9 +283,12 @@ function drawJewelry(landmarks, context) {
     ctx.drawImage(necklaceImg, -desiredWidth/2, -desiredHeight/2, desiredWidth, desiredHeight);
     ctx.restore();
   }
+
+  // watermark
+  drawWatermark(ctx);
 }
 
-/* DRAW watermark helper */
+/* draw watermark helper */
 function drawWatermark(ctx) {
   try {
     if (watermarkImg && watermarkImg.naturalWidth) {
@@ -267,62 +303,31 @@ function drawWatermark(ctx) {
   } catch (e) { console.warn("Watermark draw failed:", e); }
 }
 
-/* ---------- Occlusion composite: copy head pixels on top of jewelry ------------- */
-/* Approach:
-   - Use lastPersonSegmentation.data (binary person mask at segmentation width/height)
-   - Build a "head box" from faceMesh landmarks (top of face to neck region)
-   - Copy video pixels from an offscreen video->canvas only where (segmentation == 1) AND inside headBox (so hair/face overlay)
-   - Draw those pixels onto main canvas on top of jewelry.
-*/
+/* ========== Occlusion composite functions ========== */
+/* Composite head region from video on top of jewelry according to segmentation */
 function compositeHeadOcclusion(mainCtx, landmarks, personSeg) {
   try {
-    // personSeg: { data: Uint8Array, width, height }
-    const segData = personSeg.data;
-    const segW = personSeg.width;
-    const segH = personSeg.height;
-
-    // Build head bounding box from landmarks (take forehead/top values and chin/neck)
-    // Use a subset of landmarks representing top of head/forehead/neck to estimate region
-    // We'll use landmark indices roughly covering forehead/top of head region: 10, 151, 9, 197, 195, 4 (approx)
+    const segData = personSeg.data; const segW = personSeg.width; const segH = personSeg.height;
+    // head bounding box from a few face landmarks
     const indices = [10, 151, 9, 197, 195, 4];
     let minX = 1, minY = 1, maxX = 0, maxY = 0;
-    indices.forEach(i => {
-      const x = landmarks[i].x; const y = landmarks[i].y;
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    });
-    // expand box a bit to capture hair
-    const padX = 0.18 * (maxX - minX);
-    const padY = 0.40 * (maxY - minY);
+    indices.forEach(i => { const x = landmarks[i].x, y = landmarks[i].y; if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y; });
+    const padX = 0.18 * (maxX - minX); const padY = 0.40 * (maxY - minY);
     const boxLeft = Math.max(0, (minX - padX) * canvasElement.width);
     const boxTop  = Math.max(0, (minY - padY) * canvasElement.height);
     const boxRight= Math.min(canvasElement.width, (maxX + padX) * canvasElement.width);
     const boxBottom=Math.min(canvasElement.height, (maxY + padY) * canvasElement.height);
-    const boxW = boxRight - boxLeft;
-    const boxH = boxBottom - boxTop;
+    const boxW = Math.max(0, boxRight - boxLeft); const boxH = Math.max(0, boxBottom - boxTop);
     if (boxW <= 0 || boxH <= 0) { drawWatermark(mainCtx); return; }
 
-    // Create offscreen canvases
-    const offVideo = document.createElement('canvas');
-    offVideo.width = canvasElement.width; offVideo.height = canvasElement.height;
-    const offVideoCtx = offVideo.getContext('2d');
-    // draw current video frame into offVideo
-    try { offVideoCtx.drawImage(videoElement, 0, 0, offVideo.width, offVideo.height); } catch (e) { return; }
+    const off = document.createElement('canvas'); off.width = canvasElement.width; off.height = canvasElement.height;
+    const offCtx = off.getContext('2d');
+    try { offCtx.drawImage(videoElement, 0, 0, off.width, off.height); } catch (e) { drawWatermark(mainCtx); return; }
 
-    // Create mask canvas sized to segmentation; we'll up/downscale as needed
-    // We'll iterate over pixels inside the head box region to keep it fast
-    const imgData = offVideoCtx.getImageData(boxLeft, boxTop, boxW, boxH);
+    const imgData = offCtx.getImageData(boxLeft, boxTop, boxW, boxH);
     const dstData = mainCtx.getImageData(boxLeft, boxTop, boxW, boxH);
+    const sx = segW / canvasElement.width; const sy = segH / canvasElement.height;
 
-    // Map box pixel coords -> segmentation coords
-    // personSeg.width/height may differ from canvas; compute scaling
-    const sx = segW / canvasElement.width;
-    const sy = segH / canvasElement.height;
-
-    // For each pixel in head-box: if segmentation indicates PERSON (1), copy video pixel to main canvas (dstData)
-    const pxLen = boxW * boxH;
     for (let y = 0; y < boxH; y++) {
       const segY = Math.floor((boxTop + y) * sy);
       if (segY < 0 || segY >= segH) continue;
@@ -331,7 +336,6 @@ function compositeHeadOcclusion(mainCtx, landmarks, personSeg) {
         if (segX < 0 || segX >= segW) continue;
         const segIdx = segY * segW + segX;
         if (segData[segIdx] === 1) {
-          // copy RGBA from imgData to dstData
           const i = (y * boxW + x) * 4;
           dstData.data[i]   = imgData.data[i];
           dstData.data[i+1] = imgData.data[i+1];
@@ -340,20 +344,12 @@ function compositeHeadOcclusion(mainCtx, landmarks, personSeg) {
         }
       }
     }
-
-    // put modified dstData back onto main canvas
     mainCtx.putImageData(dstData, boxLeft, boxTop);
-
-    // finally draw watermark
     drawWatermark(mainCtx);
-
-  } catch (e) {
-    console.warn("compositeHeadOcclusion failed:", e);
-    drawWatermark(mainCtx);
-  }
+  } catch (e) { console.warn("compositeHeadOcclusion failed:", e); drawWatermark(mainCtx); }
 }
 
-/* ---------- Snapshot helpers + Try-All (use same capture logic so watermark & occlusion included) ---------- */
+/* ========== Snapshot, Try-All, Gallery, Share logic ========== */
 function triggerFlash() { if (!flashOverlay) return; flashOverlay.classList.add('active'); setTimeout(() => flashOverlay.classList.remove('active'), 180); }
 
 async function takeSnapshot() {
@@ -361,18 +357,15 @@ async function takeSnapshot() {
   await ensureWatermarkLoaded();
   triggerFlash();
 
-  // snapshot canvas
   const snapshotCanvas = document.createElement('canvas');
-  snapshotCanvas.width = canvasElement.width;
-  snapshotCanvas.height = canvasElement.height;
+  snapshotCanvas.width = canvasElement.width; snapshotCanvas.height = canvasElement.height;
   const ctx = snapshotCanvas.getContext('2d');
 
   try { ctx.drawImage(videoElement, 0, 0, snapshotCanvas.width, snapshotCanvas.height); } catch (e) { console.warn("Snapshot video draw failed:", e); }
+  // draw jewelry onto snapshot using smoothedState
+  drawJewelryFromState(smoothedState, ctx, smoothedLandmarks);
 
-  // draw jewelry onto snapshot
-  drawJewelry(smoothedLandmarks, ctx);
-
-  // optionally run a final segmentation to occlude head on snapshot (synchronous using last segmentation)
+  // try occlusion with last segmentation
   if (lastPersonSegmentation && lastPersonSegmentation.data) {
     compositeSnapshotHeadOcclusion(snapshotCanvas, ctx, smoothedLandmarks, lastPersonSegmentation);
   } else {
@@ -384,43 +377,45 @@ async function takeSnapshot() {
   document.getElementById('snapshot-modal').style.display = 'block';
 }
 
-// Similar helper to composite occlusion for snapshot canvas (uses same logic as compositeHeadOcclusion but operates on provided canvas)
+function saveSnapshot() {
+  const link = document.createElement('a'); link.href = lastSnapshotDataURL; link.download = `jewelry-tryon-${Date.now()}.png`;
+  document.body.appendChild(link); link.click(); document.body.removeChild(link);
+}
+
+async function shareSnapshot() {
+  if (!navigator.share || !navigator.canShare) { alert('Sharing not supported on this device.'); return; }
+  const resp = await fetch(lastSnapshotDataURL); const blob = await resp.blob();
+  const file = new File([blob], 'jewelry-tryon.png', { type: 'image/png' });
+  await navigator.share({ title: 'Jewelry Try-On', text: 'Check out my look!', files: [file] });
+}
+
+function closeSnapshotModal() { document.getElementById('snapshot-modal').style.display = 'none'; }
+
 function compositeSnapshotHeadOcclusion(snapshotCanvas, ctx, landmarks, personSeg) {
   try {
-    const segData = personSeg.data;
-    const segW = personSeg.width;
-    const segH = personSeg.height;
-
+    const segData = personSeg.data; const segW = personSeg.width; const segH = personSeg.height;
     const indices = [10, 151, 9, 197, 195, 4];
     let minX = 1, minY = 1, maxX = 0, maxY = 0;
-    indices.forEach(i => {
-      const x = landmarks[i].x; const y = landmarks[i].y;
-      if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y;
-    });
-    const padX = 0.18 * (maxX - minX);
-    const padY = 0.40 * (maxY - minY);
+    indices.forEach(i => { const x = landmarks[i].x, y = landmarks[i].y; if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y; });
+    const padX = 0.18 * (maxX - minX); const padY = 0.40 * (maxY - minY);
     const boxLeft = Math.max(0, (minX - padX) * snapshotCanvas.width);
     const boxTop  = Math.max(0, (minY - padY) * snapshotCanvas.height);
     const boxRight= Math.min(snapshotCanvas.width, (maxX + padX) * snapshotCanvas.width);
     const boxBottom=Math.min(snapshotCanvas.height, (maxY + padY) * snapshotCanvas.height);
-    const boxW = boxRight - boxLeft; const boxH = boxBottom - boxTop;
+    const boxW = Math.max(0, boxRight - boxLeft); const boxH = Math.max(0, boxBottom - boxTop);
     if (boxW <= 0 || boxH <= 0) { drawWatermark(ctx); return; }
 
     const off = document.createElement('canvas'); off.width = snapshotCanvas.width; off.height = snapshotCanvas.height;
-    const offCtx = off.getContext('2d');
-    offCtx.drawImage(videoElement, 0, 0, off.width, off.height);
+    const offCtx = off.getContext('2d'); offCtx.drawImage(videoElement, 0, 0, off.width, off.height);
 
     const imgData = offCtx.getImageData(boxLeft, boxTop, boxW, boxH);
     const dstData = ctx.getImageData(boxLeft, boxTop, boxW, boxH);
-    const sx = segW / snapshotCanvas.width;
-    const sy = segH / snapshotCanvas.height;
+    const sx = segW / snapshotCanvas.width; const sy = segH / snapshotCanvas.height;
 
     for (let y = 0; y < boxH; y++) {
-      const segY = Math.floor((boxTop + y) * sy);
-      if (segY < 0 || segY >= segH) continue;
+      const segY = Math.floor((boxTop + y) * sy); if (segY < 0 || segY >= segH) continue;
       for (let x = 0; x < boxW; x++) {
-        const segX = Math.floor((boxLeft + x) * sx);
-        if (segX < 0 || segX >= segW) continue;
+        const segX = Math.floor((boxLeft + x) * sx); if (segX < 0 || segX >= segW) continue;
         const segIdx = segY * segW + segX;
         if (segData[segIdx] === 1) {
           const i = (y * boxW + x) * 4;
@@ -436,10 +431,7 @@ function compositeSnapshotHeadOcclusion(snapshotCanvas, ctx, landmarks, personSe
   } catch (e) { console.warn("compositeSnapshotHeadOcclusion failed:", e); drawWatermark(ctx); }
 }
 
-/* Info modal */
-function toggleInfoModal() { const modal = document.getElementById('info-modal'); modal.style.display = modal.style.display === 'block' ? 'none' : 'block'; }
-
-/* TRY ALL + gallery (unchanged logic but ensure snapshots are captured using takeSnapshot-like flow) */
+/* TRY ALL */
 function stopAutoTry() {
   autoTryRunning = false;
   if (autoTryTimeout) clearTimeout(autoTryTimeout);
@@ -460,21 +452,21 @@ async function startAutoTry() {
     if (!autoTryRunning) return;
     const src = list[autoTryIndex];
     if (currentType.includes('earrings')) await changeEarring(src); else await changeNecklace(src);
+
     await new Promise(res => setTimeout(res, 800));
     triggerFlash();
     if (smoothedLandmarks) {
-      // capture snapshot with occlusion
       const snapshotCanvas = document.createElement('canvas');
       snapshotCanvas.width = canvasElement.width; snapshotCanvas.height = canvasElement.height;
       const ctx = snapshotCanvas.getContext('2d');
       try { ctx.drawImage(videoElement, 0, 0, snapshotCanvas.width, snapshotCanvas.height); } catch (e) { console.warn("AutoTry video draw failed:", e); }
-      drawJewelry(smoothedLandmarks, ctx);
-      // run segmentation (best-effort)
+      drawJewelryFromState(smoothedState, ctx, smoothedLandmarks);
       await ensureBodyPixLoaded(); await runBodyPixIfNeeded();
       if (lastPersonSegmentation && lastPersonSegmentation.data) compositeSnapshotHeadOcclusion(snapshotCanvas, ctx, smoothedLandmarks, lastPersonSegmentation);
       else drawWatermark(ctx);
       autoSnapshots.push(snapshotCanvas.toDataURL('image/png'));
     }
+
     autoTryIndex++;
     if (autoTryIndex >= list.length) { stopAutoTry(); openGallery(); return; }
     autoTryTimeout = setTimeout(step, 2000);
@@ -482,7 +474,7 @@ async function startAutoTry() {
   step();
 }
 
-/* GALLERY, DOWNLOAD, SHARE (unchanged) */
+/* GALLERY */
 function openGallery() {
   if (!autoSnapshots.length) { alert('No snapshots captured.'); return; }
   galleryThumbs.innerHTML = '';
@@ -503,6 +495,7 @@ function setGalleryMain(index) {
 }
 if (galleryClose) galleryClose.addEventListener('click', () => { galleryModal.style.display = 'none'; });
 
+/* DOWNLOAD & SHARE */
 async function downloadAllImages() {
   if (!autoSnapshots.length) { alert("No images to download."); return; }
   const zip = new JSZip(); const folder = zip.folder("Your_Looks");
@@ -513,7 +506,6 @@ async function downloadAllImages() {
   const content = await zip.generateAsync({ type: "blob" });
   saveAs(content, "OverlayJewels_Looks.zip");
 }
-
 async function shareCurrentFromGallery() {
   if (!galleryMain.src) { alert("No image selected."); return; }
   if (!navigator.share || !navigator.canShare) { alert("Sharing not supported on this device."); return; }
@@ -522,7 +514,7 @@ async function shareCurrentFromGallery() {
   await navigator.share({ title: 'Jewelry Try-On', text: 'Check out my jewellery look!', files: [file] });
 }
 
-/* Snapshot saving & sharing helpers */
+/* share/save helpers */
 function saveSnapshot() {
   const link = document.createElement('a'); link.href = lastSnapshotDataURL; link.download = `jewelry-tryon-${Date.now()}.png`;
   document.body.appendChild(link); link.click(); document.body.removeChild(link);
@@ -535,7 +527,10 @@ async function shareSnapshot() {
 }
 function closeSnapshotModal() { document.getElementById('snapshot-modal').style.display = 'none'; }
 
-/* export global functions */
+/* Info modal */
+function toggleInfoModal() { const modal = document.getElementById('info-modal'); modal.style.display = modal.style.display === 'block' ? 'none' : 'block'; }
+
+/* expose globals */
 window.toggleCategory = toggleCategory;
 window.selectJewelryType = selectJewelryType;
 window.takeSnapshot = takeSnapshot;
