@@ -356,3 +356,145 @@ body {
     bottom: 120px;
   }
 }
+
+/* ---------------------- LIVE TUNING PANEL (ADDED) ---------------------- */
+/* Panel container */
+#tuning-panel {
+  position: fixed;
+  right: 14px;
+  top: 80px;
+  width: 270px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+  border: 1px solid rgba(255,255,255,0.06);
+  backdrop-filter: blur(6px);
+  padding: 12px;
+  border-radius: 12px;
+  z-index: 10000;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+  color: #fff;
+  font-size: 13px;
+}
+
+/* header */
+#tuning-panel h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #f4a600;
+  text-align: left;
+}
+
+/* each control row */
+.tune-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+/* label + value row */
+.tune-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #ddd;
+}
+
+/* slider */
+.tune-row input[type="range"] {
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 999px;
+  outline: none;
+}
+
+/* range thumb */
+.tune-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f4a600;
+  border: 2px solid rgba(0,0,0,0.25);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+  cursor: pointer;
+}
+.tune-row input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f4a600;
+  border: 2px solid rgba(0,0,0,0.25);
+  cursor: pointer;
+}
+
+/* numeric value bubble */
+.tune-value {
+  font-weight: 700;
+  color: #fff;
+  background: rgba(0,0,0,0.35);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+/* small on/off toggle row */
+.toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+}
+
+/* toggle switch */
+.toggle {
+  --w: 44px;
+  --h: 24px;
+  width: var(--w);
+  height: var(--h);
+  background: rgba(255,255,255,0.08);
+  border-radius: 999px;
+  position: relative;
+  cursor: pointer;
+  transition: background .18s;
+}
+.toggle .knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(var(--h) - 4px);
+  height: calc(var(--h) - 4px);
+  background: #fff;
+  border-radius: 50%;
+  transition: left .18s, background .18s;
+}
+.toggle.on {
+  background: rgba(100,50,200,0.95);
+}
+.toggle.on .knob {
+  left: calc(var(--w) - var(--h) + 2px);
+  background: #fff;
+}
+
+/* mini helper text */
+.tuning-help {
+  font-size: 11px;
+  color: rgba(255,255,255,0.65);
+  margin-top: 6px;
+}
+
+/* collapsed small mode for mobile */
+@media (max-width: 420px) {
+  #tuning-panel { right: 8px; top: 70px; width: 220px; padding: 10px; }
+  .tune-row { margin-bottom: 8px; }
+}
+
+/* hide panel when printing or if user toggles it off in JS */
+#tuning-panel.hidden {
+  display: none !important;
+}
