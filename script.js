@@ -14,7 +14,7 @@ let lastSnapshotDataURL = '';
 
 /* TUNABLES: visual placement and smoothing */
 const NECK_SCALE_MULTIPLIER   = 1.15; // adjust chain size
-const NECK_Y_OFFSET_FACTOR    = 0.60; // move chain down (increase = lower)
+const NECK_Y_OFFSET_FACTOR    = 0.95; // move chain down (increase = lower)
 const NECK_X_OFFSET_FACTOR    = 0.0;
 
 const POS_SMOOTH = 0.88;   // 0..1  (higher = more stable, more lag)
