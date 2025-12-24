@@ -1,500 +1,418 @@
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+/* style.css - Aurum Atelier Premium AR Interface */
+
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Montserrat:wght@400;600&display=swap');
+
+:root {
+  --accent: #d4af37;
+  --accent-glow: rgba(212, 175, 55, 0.4);
+  --bg: #000;
+  --glass: rgba(255, 255, 255, 0.1);
+  --glass-dark: rgba(0, 0, 0, 0.7);
 }
 
-body {
-  margin: 0;
-  background: #000;
-  color: #fff;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  overflow: hidden;
+body { 
+  margin: 0; 
+  background: var(--bg); 
+  font-family: 'Montserrat', sans-serif; 
+  overflow: hidden; 
+  color: #fff; 
+  user-select: none;
 }
 
-#app {
-  width: 100vw;
-  height: 100vh;
-  position: relative;
+/* --- 1. VIDEO & CANVAS LAYERS --- */
+#video-container { 
+  position: fixed; 
+  inset: 0; 
+  z-index: 0; 
+  background: black;
 }
 
-/* Logo */
-#logo {
-  position: fixed;
-  top: 12px;
-  left: 12px;
-  z-index: 10;
-}
-#logo img {
-  height: 40px;
-}
-
-/* Video & Canvas: we draw video to canvas; hide raw video element */
-#video-container {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  background: #000;
-}
-
-/* hide the raw video since canvas shows the feed */
 #webcam {
-  display: none;
-}
-
-#overlay {
   position: absolute;
-  top: 0;
-  left: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  background: #000;
-  z-index: 1;
+  object-fit: cover;
+  transform: scaleX(-1);
 }
 
-/* Jewelry category bar */
-#jewelry-mode {
+#overlay { 
+  position: absolute;
+  width: 100%; 
+  height: 100%; 
+  object-fit: cover; 
+  z-index: 1; 
+}
+
+/* --- 2. LOADING STATUS --- */
+#loading-status {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.8);
+    color: var(--accent);
+    padding: 20px 40px;
+    border-radius: 10px;
+    border: 1px solid var(--accent);
+    font-family: 'Playfair Display';
+    font-size: 20px;
+    z-index: 500;
+}
+
+/* --- 3. GESTURE INDICATOR (HIDDEN) --- */
+#gesture-indicator {
+  display: none !important; 
+}
+
+#indicator-dot { 
+  width: 10px; 
+  height: 10px; 
+  background: #555; 
+  border-radius: 50%; 
+  box-shadow: 0 0 8px rgba(0,0,0,0.5);
+  transition: background 0.3s ease;
+}
+
+/* --- 4. TOP BRANDING BAR --- */
+#controls-hero {
   position: fixed;
-  bottom: 100px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 16px;
-  z-index: 20;
-}
-
-#jewelry-mode button {
-  padding: 10px 20px;
-  border-radius: 999px;
-  border: none;
-  background: #f4a600;
-  color: #000;
-  font-weight: 600;
-  font-size: 16px;
-  cursor: pointer;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-}
-
-#tryall-btn.active {
-  background: #6a0dad;
-  color: #fff;
-}
-
-/* Subcategory buttons */
-#subcategory-buttons {
-  position: fixed;
-  bottom: 60px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 10px;
-  z-index: 20;
-}
-
-#subcategory-buttons button {
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: none;
-  background: #5E0F8B;
-  color: #fff;
-  font-size: 14px;
-  cursor: pointer;
-}
-
-/* Jewelry thumbnails */
-#jewelry-options {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: rgba(92, 23, 140, 0.98);
-  display: flex;
-  overflow-x: auto;
-  padding: 8px 12px;
-  gap: 10px;
-  z-index: 20;
-}
-
-#jewelry-options button {
-  background: transparent;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-}
-
-#jewelry-options img {
-  height: 60px;
-  width: auto;
-  object-fit: contain;
-}
-
-/* Snapshot button */
-#snapshot-btn {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  z-index: 20;
-}
-
-#snapshot-btn img {
-  width: 36px;
-  height: 36px;
-}
-
-/* Info button */
-#info-btn {
-  position: fixed;
-  top: 16px;
-  right: 70px;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: none;
-  background: #5E0F8B;
-  color: #fff;
-  font-weight: 700;
-  cursor: pointer;
-  z-index: 20;
-}
-
-/* Location Button */
-#location-btn {
-  position: fixed;
-  bottom: 10px;
-  left: 20px;
-  border-radius: 50%;
-  border: none;
-  background: transparent;
-  z-index: 20;
-}
-#location-btn img {
-  width: 42px;
-  height: 42px;
-}
-
-/* Info Modal */
-#info-modal {
-  display: none;
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: rgba(0, 0, 0, 0.95);
-  padding: 24px;
-  border-radius: 16px;
-  max-width: 90%;
-  width: 400px;
-  z-index: 9999;
-}
-
-#info-modal h3 {
-  margin-bottom: 10px;
-  text-align: center;
-}
-
-.info-content ul {
-  padding-left: 20px;
-  line-height: 1.6;
-}
-
-.close-btn {
-  background-color: #5E0F8B;
-  color: #ffffff;
-  border: none;
-  padding: 10px 15px;
-  border-radius: 8px;
-  cursor: pointer;
-  margin-top: 20px;
-}
-
-/* Snapshot Modal */
-#snapshot-modal {
-  display: none;
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: #fff;
-  border-radius: 12px;
+  top: 0; left: 0; right: 0;
   padding: 20px;
-  text-align: center;
-  z-index: 9999;
-  max-width: 90%;
-  width: 420px;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.85), transparent);
+  z-index: 10;
 }
 
-#snapshot-preview {
-  width: 100%;
-  max-width: 400px;
-  border-radius: 10px;
-  margin-bottom: 10px;
+.brand-row { 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center; 
 }
 
-.snapshot-buttons button {
-  margin: 5px;
-  padding: 10px 16px;
-  border: none;
-  border-radius: 8px;
-  background: #5E0F8B;
-  color: #ffffff;
-  cursor: pointer;
-}
-
-/* FLASH overlay */
-#flash-overlay {
-  position: fixed;
-  inset: 0;
-  background: #fff;
-  opacity: 0;
-  pointer-events: none;
-  z-index: 9998;
-  transition: opacity 0.15s ease-out;
-}
-
-#flash-overlay.active {
-  opacity: 0.9;
-}
-
-/* Gallery Modal */
-#gallery-modal {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.85);
-  z-index: 9999;
-  justify-content: center;
+.brand-left {
+  display: flex;
   align-items: center;
+}
+
+.brand-logo { height: 40px; margin-right: 12px; }
+.brand-name { font-family: 'Playfair Display'; font-size: 22px; color: var(--accent); letter-spacing: 1px; }
+
+.action-row button {
+  background: var(--glass); 
+  border: 1px solid rgba(255,255,255,0.1);
+  padding: 10px; 
+  border-radius: 50%; 
+  margin-left: 10px; 
+  cursor: pointer;
+  transition: transform 0.2s;
+  color: white;
+}
+
+.action-row button:hover { transform: scale(1.1); background: rgba(255,255,255,0.2); }
+
+/* --- 5. CONTROLS PANEL (BOTTOM) --- */
+.controls-panel {
+  position: fixed;
+  bottom: 25px; 
+  left: 50%; 
+  transform: translateX(-50%);
+  width: 90%; 
+  max-width: 600px;
+  text-align: center;
+  z-index: 15;
+}
+
+.pill-group, .sub-pills { 
+  display: flex; 
+  justify-content: center; 
+  gap: 12px; 
+  margin-bottom: 15px; 
+  flex-wrap: wrap;
+}
+
+.pill, .subpill {
+  padding: 12px 24px; 
+  border-radius: 30px; 
+  border: 1px solid rgba(255,255,255,0.1); 
+  background: var(--glass);
+  color: #fff; 
+  font-weight: 600; 
+  cursor: pointer; 
+  backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+  font-size: 14px;
+}
+
+.pill:hover, .subpill:hover { background: rgba(255,255,255,0.2); border-color: var(--accent); }
+
+.pill.accent { 
+  background: var(--accent); 
+  color: #000; 
+  border: none;
+  box-shadow: 0 4px 15px var(--accent-glow);
+}
+
+.pill.accent.active {
+  background: #ff4444 !important;
+  color: #fff;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+/* --- 6. CAROUSEL --- */
+.carousel-cards {
+  display: flex; 
+  gap: 15px; 
+  overflow-x: auto; 
+  padding: 15px; 
+  justify-content: center;
+  scrollbar-width: none; 
+}
+
+.thumb-btn { 
+  height: 70px; 
+  width: 70px;
+  object-fit: contain;
+  background: var(--glass);
+  padding: 5px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  cursor: pointer; 
+  transition: all 0.2s;
+}
+
+.thumb-btn:hover { border-color: var(--accent); transform: translateY(-5px); }
+
+/* --- 7. SINGLE PREVIEW MODAL --- */
+#preview-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.95);
+    z-index: 2000;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.preview-container {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    overflow: hidden;
+    padding: 20px;
+}
+
+#preview-image {
+    max-width: 100%;
+    max-height: 80vh;
+    border: 2px solid var(--accent);
+    border-radius: 12px;
+    box-shadow: 0 0 30px rgba(0,0,0,0.5);
+}
+
+.preview-actions {
+    padding: 30px;
+    display: flex;
+    gap: 20px;
+    width: 100%;
+    justify-content: center;
+    background: rgba(0,0,0,0.5);
+}
+
+.close-preview {
+    position: absolute;
+    top: 20px;
+    right: 30px;
+    font-size: 40px;
+    color: white;
+    cursor: pointer;
+    z-index: 2001;
+}
+
+/* --- 8. GALLERY GRID --- */
+#gallery-modal {
+  position: fixed; 
+  inset: 0; 
+  background: rgba(0,0,0,0.95);
+  z-index: 1000; 
+  display: none; 
+  align-items: center; 
+  justify-content: center;
+  backdrop-filter: blur(10px);
 }
 
 .gallery-content {
-  background: #111;
-  border-radius: 18px;
-  padding: 20px 20px 16px;
-  max-width: 90%;
-  width: 640px;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.7);
-  position: relative;
-}
-
-.gallery-content h2 {
+  background: #0f0f0f; 
+  width: 90%; 
+  max-width: 900px;
+  max-height: 85vh; 
+  border-radius: 24px;
+  padding: 40px; 
+  position: relative; 
+  border: 1px solid var(--accent);
+  overflow-y: auto; 
   text-align: center;
-  margin-bottom: 10px;
 }
 
-#gallery-close {
-  position: absolute;
-  top: 10px;
-  right: 14px;
-  background: #5E0F8B;
-  color: #fff;
-  border: none;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  font-size: 20px;
-  cursor: pointer;
+.gallery-subtitle {
+    color: #888;
+    margin-bottom: 20px;
+    font-size: 14px;
 }
 
-#gallery-main {
-  width: 100%;
-  max-height: 320px;
-  object-fit: contain;
-  border-radius: 10px;
-  background: #000;
-  margin-bottom: 12px;
+#gallery-grid {
+  display: grid; 
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 15px; 
+  margin: 10px 0;
 }
 
-#gallery-thumbs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  max-height: 150px;
-  overflow-y: auto;
-  justify-content:center;
-  margin-bottom: 10px;
-}
-
-#gallery-thumbs img {
-  width: 70px;
-  height: 70px;
+.gallery-thumb { 
+  width: 100%; 
+  aspect-ratio: 1;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: 10px; 
+  border: 2px solid rgba(255,255,255,0.1); 
   cursor: pointer;
-  border: 2px solid transparent;
+  transition: all 0.2s;
 }
 
-#gallery-thumbs img.active {
-  border-color: #f4a600;
+.gallery-thumb:hover {
+    border-color: var(--accent);
+    transform: scale(1.05);
 }
 
-.gallery-buttons {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
+.close-gallery {
+  position: absolute; 
+  top: 20px; 
+  right: 25px; 
+  font-size: 35px; 
+  cursor: pointer; 
+  color: var(--accent);
+  line-height: 1;
 }
 
-.gallery-buttons button {
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: none;
-  background: #5E0F8B;
-  color: #fff;
-  cursor: pointer;
-  font-size: 14px;
+/* --- 9. LIGHTBOX --- */
+#lightbox-overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.98);
+    z-index: 2000;
+    display: none; 
+    flex-direction: column;
 }
 
-/* Responsive tweaks */
-@media (max-width: 600px) {
-  #jewelry-options img {
+.lightbox-main {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    overflow: hidden;
+}
+
+#lightbox-image {
+    max-width: 100%;
+    max-height: 100%;
+    border: 1px solid #333;
+    border-radius: 8px;
+    box-shadow: 0 0 30px rgba(0,0,0,0.5);
+}
+
+.lightbox-strip {
+    height: 100px;
+    background: rgba(20, 20, 20, 0.95);
+    border-top: 1px solid #333;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 10px;
+    overflow-x: auto;
+    white-space: nowrap;
+}
+
+.lightbox-strip::-webkit-scrollbar { display: none; }
+.lightbox-strip { scrollbar-width: none; }
+
+.strip-thumb {
+    height: 70px;
+    width: 70px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.strip-thumb:hover {
+    opacity: 1;
+    transform: translateY(-2px);
+}
+
+.strip-thumb.active {
+    opacity: 1;
+    border-color: var(--accent);
+    box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.close-lightbox {
+    position: absolute;
+    top: 20px; right: 30px;
+    font-size: 40px;
+    color: white;
+    cursor: pointer;
+    z-index: 2001;
+}
+
+/* --- 10. SPINNER --- */
+#process-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.9);
+    z-index: 4000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.process-box {
+    text-align: center;
+    color: white;
+}
+
+.spinner {
+    width: 50px;
     height: 50px;
-  }
-  #jewelry-mode {
-    bottom: 120px;
-  }
+    margin: 0 auto;
+    border: 5px solid rgba(255,255,255,0.1);
+    border-top: 5px solid var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
 }
 
-/* ---------------------- LIVE TUNING PANEL (ADDED) ---------------------- */
-/* Panel container */
-#tuning-panel {
-  position: fixed;
-  right: 14px;
-  top: 80px;
-  width: 270px;
-  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-  border: 1px solid rgba(255,255,255,0.06);
-  backdrop-filter: blur(6px);
-  padding: 12px;
-  border-radius: 12px;
-  z-index: 10000;
-  box-shadow: 0 8px 30px rgba(0,0,0,0.6);
-  color: #fff;
-  font-size: 13px;
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 
-/* header */
-#tuning-panel h4 {
-  margin: 0 0 8px 0;
-  font-size: 14px;
-  font-weight: 700;
-  color: #f4a600;
-  text-align: left;
+/* --- 11. FLASH --- */
+#flash-overlay {
+  position: fixed; 
+  inset: 0; 
+  background: #fff; 
+  opacity: 0; 
+  pointer-events: none; 
+  z-index: 3000;
 }
-
-/* each control row */
-.tune-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-/* label + value row */
-.tune-label {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-  color: #ddd;
-}
-
-/* slider */
-.tune-row input[type="range"] {
-  width: 100%;
-  -webkit-appearance: none;
-  appearance: none;
-  height: 6px;
-  background: rgba(255,255,255,0.08);
-  border-radius: 999px;
-  outline: none;
-}
-
-/* range thumb */
-.tune-row input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #f4a600;
-  border: 2px solid rgba(0,0,0,0.25);
-  box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-  cursor: pointer;
-}
-.tune-row input[type="range"]::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #f4a600;
-  border: 2px solid rgba(0,0,0,0.25);
-  cursor: pointer;
-}
-
-/* numeric value bubble */
-.tune-value {
-  font-weight: 700;
-  color: #fff;
-  background: rgba(0,0,0,0.35);
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-}
-
-/* small on/off toggle row */
-.toggle-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 6px;
-}
-
-/* toggle switch */
-.toggle {
-  --w: 44px;
-  --h: 24px;
-  width: var(--w);
-  height: var(--h);
-  background: rgba(255,255,255,0.08);
-  border-radius: 999px;
-  position: relative;
-  cursor: pointer;
-  transition: background .18s;
-}
-.toggle .knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: calc(var(--h) - 4px);
-  height: calc(var(--h) - 4px);
-  background: #fff;
-  border-radius: 50%;
-  transition: left .18s, background .18s;
-}
-.toggle.on {
-  background: rgba(100,50,200,0.95);
-}
-.toggle.on .knob {
-  left: calc(var(--w) - var(--h) + 2px);
-  background: #fff;
-}
-
-/* mini helper text */
-.tuning-help {
-  font-size: 11px;
-  color: rgba(255,255,255,0.65);
-  margin-top: 6px;
-}
-
-/* collapsed small mode for mobile */
-@media (max-width: 420px) {
-  #tuning-panel { right: 8px; top: 70px; width: 220px; padding: 10px; }
-  .tune-row { margin-bottom: 8px; }
-}
-
-/* hide panel when printing or if user toggles it off in JS */
-#tuning-panel.hidden {
-  display: none !important;
+#flash-overlay.active { 
+  opacity: 1; 
+  transition: opacity 0.05s; 
 }

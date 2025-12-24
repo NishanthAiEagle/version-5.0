@@ -1,543 +1,637 @@
-// script.js - integrated: smoothing for jitter reduction + BodyPix occlusion + watermark + Try-All
+/* script.js - Aurum Atelier: Google Drive Integration */
 
-const videoElement   = document.getElementById('webcam');
-const canvasElement  = document.getElementById('overlay');
-const canvasCtx      = canvasElement.getContext('2d');
+/* --- GOOGLE DRIVE CONFIGURATION --- */
+const API_KEY = "AIzaSyBhi05HMVGg90dPP91zG1RZtNxm-d6hnQw"; 
 
-let earringImg = null;
-let necklaceImg = null;
-let earringSrc = '';
-let necklaceSrc = '';
-let currentType = '';
-let smoothedLandmarks = null;
-let lastSnapshotDataURL = '';
-
-/* TUNABLES: visual placement and smoothing */
-const NECK_SCALE_MULTIPLIER   = 1.15; // adjust chain size
-const NECK_Y_OFFSET_FACTOR    = 0.95; // move chain down (increase = lower)
-const NECK_X_OFFSET_FACTOR    = 0.0;
-
-const POS_SMOOTH = 0.88;   // 0..1  (higher = more stable, more lag)
-const ANGLE_SMOOTH = 0.82;
-const EAR_DIST_SMOOTH = 0.90;
-const ANGLE_BUFFER_LEN = 5;
-
-/* smoothing state */
-const smoothedState = {
-  leftEar: null,
-  rightEar: null,
-  neckPoint: null,
-  angle: 0,
-  earDist: null,
+const DRIVE_FOLDERS = {
+  diamond_earrings: "1N0jndAEIThUuuNAJpvuRMGsisIaXCgMZ",
+  diamond_necklaces: "1JGV8T03YdzjfW0Dyt9aMPybH8V9-gEhw",
+  gold_earrings: "1GMZpcv4A1Gy2xiaIC1XPG_IOAt9NrDpi",
+  gold_necklaces: "1QIvX-PrSVrK9gz-TEksqiKlXPGv2hsS5"
 };
-const angleBuffer = [];
 
-/* BodyPix segmentation settings */
-let bodyPixNet = null;
-const BODYPIX_CONFIG = { architecture: 'MobileNetV1', outputStride: 16, multiplier: 0.50, quantBytes: 2 };
-const SEGMENTATION_CONFIG = { internalResolution: 'low', segmentationThreshold: 0.7 };
-const BODYPIX_THROTTLE_MS = 250;
-let lastBodyPixRun = 0;
-let lastPersonSegmentation = null;
+/* Asset Cache to store fetched Drive data */
+/* Structure: { categoryName: [ { id: '...', name: '...', src: '...' }, ... ] } */
+const JEWELRY_ASSETS = {};
+const PRELOADED_IMAGES = {}; // Holds actual Image objects
 
-/* TRY ALL + Gallery */
-let autoTryRunning = false;
-let autoTryTimeout = null;
-let autoTryIndex = 0;
-let autoSnapshots = [];
-
-const tryAllBtn      = document.getElementById('tryall-btn');
-const flashOverlay   = document.getElementById('flash-overlay');
-const galleryModal   = document.getElementById('gallery-modal');
-const galleryMain    = document.getElementById('gallery-main');
-const galleryThumbs  = document.getElementById('gallery-thumbs');
-const galleryClose   = document.getElementById('gallery-close');
-
-/* WATERMARK */
+/* --- 1. PRELOAD WATERMARK --- */
 const watermarkImg = new Image();
-watermarkImg.src = "logo_watermark.png";
-watermarkImg.crossOrigin = "anonymous";
-function ensureWatermarkLoaded() {
-  return new Promise((resolve) => {
-    if (watermarkImg.complete && watermarkImg.naturalWidth !== 0) resolve();
-    else { watermarkImg.onload = () => resolve(); watermarkImg.onerror = () => resolve(); }
-  });
+watermarkImg.src = 'logo_watermark.png'; // Ensure this file exists locally or serves from a URL
+
+/* DOM Elements */
+const videoElement = document.getElementById('webcam');
+const canvasElement = document.getElementById('overlay');
+const canvasCtx = canvasElement.getContext('2d');
+const loadingStatus = document.getElementById('loading-status');
+
+/* --- HIDE GESTURE INDICATOR --- */
+const gestureIndicator = document.getElementById('gesture-indicator');
+if (gestureIndicator) {
+    gestureIndicator.style.display = 'none';
+}
+const indicatorDot = document.getElementById('indicator-dot');
+
+/* App State */
+let earringImg = null, necklaceImg = null, currentType = '';
+let isProcessingHand = false;
+let isProcessingFace = false;
+
+/* --- Gesture State --- */
+let lastGestureTime = 0;
+const GESTURE_COOLDOWN = 800; 
+let previousHandX = null;     
+
+/* --- Try All / Gallery State --- */
+let autoTryRunning = false;
+let autoSnapshots = [];
+let autoTryIndex = 0;
+let autoTryTimeout = null;
+let currentPreviewData = { url: null, name: 'aurum_look.png' }; 
+
+/* --- GOOGLE DRIVE API FETCH --- */
+async function fetchFromDrive(category) {
+    // If we already have the data, don't fetch again
+    if (JEWELRY_ASSETS[category]) return;
+
+    const folderId = DRIVE_FOLDERS[category];
+    if (!folderId) {
+        console.error(`No Folder ID found for category: ${category}`);
+        return;
+    }
+
+    loadingStatus.style.display = 'block';
+    loadingStatus.textContent = "Fetching Designs...";
+
+    try {
+        // Fetch files from Drive Folder
+        const query = `'${folderId}' in parents and trashed = false and mimeType contains 'image/'`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)&key=${API_KEY}`;
+        
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.error) {
+            throw new Error(data.error.message);
+        }
+
+        // Map Drive files to our asset structure
+        JEWELRY_ASSETS[category] = data.files.map(file => ({
+            id: file.id,
+            name: file.name,
+            // Construct a direct view URL
+            src: `https://drive.google.com/uc?export=view&id=${file.id}`
+        }));
+
+        loadingStatus.style.display = 'none';
+
+    } catch (err) {
+        console.error("Drive API Error:", err);
+        loadingStatus.textContent = "Error Loading Images";
+        alert("Failed to load images from Google Drive. Check console for details.");
+    }
 }
 
-/* IMAGE HELPERS */
-function loadImage(src) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.src = src;
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
-  });
-}
-async function changeEarring(src) { earringSrc = src; const img = await loadImage(src); if (img) earringImg = img; }
-async function changeNecklace(src) { necklaceSrc = src; const img = await loadImage(src); if (img) necklaceImg = img; }
+/* --- PRELOADER --- */
+async function preloadCategory(type) {
+    // 1. Ensure we have the file list from Drive
+    await fetchFromDrive(type);
+    
+    if (!JEWELRY_ASSETS[type]) return;
 
-/* CATEGORY / UI */
-function toggleCategory(category) {
-  document.getElementById('subcategory-buttons').style.display = 'flex';
-  const subButtons = document.querySelectorAll('#subcategory-buttons button');
-  subButtons.forEach(btn => {
-    btn.style.display = btn.innerText.toLowerCase().includes(category) ? 'inline-block' : 'none';
-  });
-  document.getElementById('jewelry-options').style.display = 'none';
-  stopAutoTry();
-}
-function selectJewelryType(type) {
-  currentType = type;
-  document.getElementById('jewelry-options').style.display = 'flex';
-  earringImg = null; necklaceImg = null; earringSrc = ''; necklaceSrc = '';
-  const { start, end } = getRangeForType(type);
-  insertJewelryOptions(type, 'jewelry-options', start, end);
-  stopAutoTry();
-}
-function getRangeForType(type) {
-  let start = 1, end = 15;
-  switch (type) {
-    case 'gold_earrings':     end = 16; break;
-    case 'gold_necklaces':    end = 19; break;
-    case 'diamond_earrings':  end = 9;  break;
-    case 'diamond_necklaces': end = 6;  break;
-    default:                  end = 15;
-  }
-  return { start, end };
-}
-function buildImageList(type) {
-  const { start, end } = getRangeForType(type); const list = [];
-  for (let i = start; i <= end; i++) list.push(`${type}/${type}${i}.png`);
-  return list;
-}
-function insertJewelryOptions(type, containerId, startIndex, endIndex) {
-  const container = document.getElementById(containerId);
-  container.innerHTML = '';
-  for (let i = startIndex; i <= endIndex; i++) {
-    const filename = `${type}${i}.png`;
-    const src = `${type}/${filename}`;
-    const btn = document.createElement('button');
-    const img = document.createElement('img');
-    img.src = src;
-    btn.appendChild(img);
-    btn.onclick = () => { if (type.includes('earrings')) changeEarring(src); else changeNecklace(src); };
-    container.appendChild(btn);
-  }
+    // 2. Preload Image Objects if not done yet
+    if (!PRELOADED_IMAGES[type]) {
+        PRELOADED_IMAGES[type] = [];
+        const files = JEWELRY_ASSETS[type];
+
+        const promises = files.map(file => {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous'; // Important for Canvas
+                img.onload = () => resolve(img);
+                img.onerror = () => resolve(null); // Resolve even on error to keep moving
+                img.src = file.src;
+                PRELOADED_IMAGES[type].push(img);
+            });
+        });
+
+        // Wait for all images in this category to load
+        loadingStatus.style.display = 'block';
+        loadingStatus.textContent = "Downloading Assets...";
+        await Promise.all(promises);
+        loadingStatus.style.display = 'none';
+    }
 }
 
-/* Mediapipe FaceMesh */
-const faceMesh = new FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
-faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
-
-/* Helpers: normalized -> pixel */
-function toPxX(normX) { return normX * canvasElement.width; }
-function toPxY(normY) { return normY * canvasElement.height; }
-
-/* BodyPix loader & throttle */
-async function ensureBodyPixLoaded() {
-  if (bodyPixNet) return;
-  bodyPixNet = await bodyPix.load(BODYPIX_CONFIG);
-  console.log("BodyPix loaded");
-}
-async function runBodyPixIfNeeded() {
-  const now = performance.now();
-  if (!bodyPixNet) return;
-  if (now - lastBodyPixRun < BODYPIX_THROTTLE_MS) return;
-  lastBodyPixRun = now;
-  try {
-    const seg = await bodyPixNet.segmentPerson(videoElement, SEGMENTATION_CONFIG);
-    lastPersonSegmentation = { data: seg.data, width: seg.width, height: seg.height };
-  } catch (e) {
-    console.warn("BodyPix segment error:", e);
-  }
+/* --- UI Indicator Helpers --- */
+function updateHandIndicator(detected) {
+  if (!detected) previousHandX = null; 
 }
 
-/* ================= main results handler (smoothing + occlusion) ================= */
-faceMesh.onResults(async (results) => {
-  // sync canvas size
-  if (videoElement.videoWidth && videoElement.videoHeight) {
-    canvasElement.width  = videoElement.videoWidth;
-    canvasElement.height = videoElement.videoHeight;
-  }
+function flashIndicator(color) {
+    if(indicatorDot && indicatorDot.style.display !== 'none') {
+        indicatorDot.style.background = color;
+        setTimeout(() => { indicatorDot.style.background = "#00ff88"; }, 300);
+    }
+}
 
-  // draw video frame
-  canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-  try { canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height); }
-  catch (e) { console.warn("Video draw failed:", e); }
+/* ---------- HAND DETECTION (SWIPE LOGIC) ---------- */
+const hands = new Hands({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
 
-  if (!results.multiFaceLandmarks || !results.multiFaceLandmarks.length) {
-    smoothedLandmarks = null;
-    drawWatermark(canvasCtx);
-    return;
-  }
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 0, 
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
 
-  const landmarks = results.multiFaceLandmarks[0];
+hands.onResults((results) => {
+  isProcessingHand = false; 
+  const hasHand = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
+  updateHandIndicator(hasHand);
 
-  // per-landmark smoothing (light)
-  if (!smoothedLandmarks) smoothedLandmarks = landmarks;
-  else {
-    smoothedLandmarks = smoothedLandmarks.map((prev, i) => ({
-      x: prev.x * 0.7 + landmarks[i].x * 0.3,
-      y: prev.y * 0.7 + landmarks[i].y * 0.3,
-      z: prev.z * 0.7 + landmarks[i].z * 0.3,
-    }));
-  }
+  if (!hasHand || autoTryRunning) return;
 
-  // derive pixel geometry
-  const leftEarPx  = { x: toPxX(smoothedLandmarks[132].x), y: toPxY(smoothedLandmarks[132].y) };
-  const rightEarPx = { x: toPxX(smoothedLandmarks[361].x), y: toPxY(smoothedLandmarks[361].y) };
-  const neckPx     = { x: toPxX(smoothedLandmarks[152].x), y: toPxY(smoothedLandmarks[152].y) };
+  const now = Date.now();
+  if (now - lastGestureTime < GESTURE_COOLDOWN) return;
 
-  const earDistPx = Math.hypot(rightEarPx.x - leftEarPx.x, rightEarPx.y - leftEarPx.y);
-  const rawAngle = Math.atan2(rightEarPx.y - leftEarPx.y, rightEarPx.x - leftEarPx.x);
+  const landmarks = results.multiHandLandmarks[0];
+  const indexTip = landmarks[8]; 
+  const currentX = indexTip.x;   
 
-  // smooth earDist
-  if (smoothedState.earDist === null) smoothedState.earDist = earDistPx;
-  else smoothedState.earDist = smoothedState.earDist * EAR_DIST_SMOOTH + earDistPx * (1 - EAR_DIST_SMOOTH);
+  if (previousHandX !== null) {
+      const diff = currentX - previousHandX;
+      const SWIPE_THRESHOLD = 0.04; 
 
-  // lerp helper
-  function lerpPoint(a, b, alpha) { return { x: a.x * alpha + b.x * (1 - alpha), y: a.y * alpha + b.y * (1 - alpha) }; }
-
-  if (!smoothedState.leftEar) {
-    smoothedState.leftEar = leftEarPx;
-    smoothedState.rightEar = rightEarPx;
-    smoothedState.neckPoint = neckPx;
-    smoothedState.angle = rawAngle;
-  } else {
-    smoothedState.leftEar  = lerpPoint(smoothedState.leftEar, leftEarPx, POS_SMOOTH);
-    smoothedState.rightEar = lerpPoint(smoothedState.rightEar, rightEarPx, POS_SMOOTH);
-    smoothedState.neckPoint= lerpPoint(smoothedState.neckPoint, neckPx, POS_SMOOTH);
-
-    // angle smoothing accounting for wrap
-    let aPrev = smoothedState.angle;
-    let aDiff = rawAngle - aPrev;
-    if (aDiff > Math.PI) aDiff -= 2 * Math.PI;
-    if (aDiff < -Math.PI) aDiff += 2 * Math.PI;
-    smoothedState.angle = aPrev + aDiff * (1 - ANGLE_SMOOTH);
-  }
-
-  // median-ish buffer for angle
-  angleBuffer.push(smoothedState.angle);
-  if (angleBuffer.length > ANGLE_BUFFER_LEN) angleBuffer.shift();
-  if (angleBuffer.length > 2) {
-    const sorted = angleBuffer.slice().sort((a,b)=>a-b);
-    smoothedState.angle = sorted[Math.floor(sorted.length/2)];
+      if (diff < -SWIPE_THRESHOLD) { 
+        navigateJewelry(1);
+        lastGestureTime = now;
+        flashIndicator("#d4af37");
+        previousHandX = null; 
+      } 
+      else if (diff > SWIPE_THRESHOLD) { 
+        navigateJewelry(-1);
+        lastGestureTime = now;
+        flashIndicator("#d4af37");
+        previousHandX = null; 
+      }
   }
 
-  // draw jewelry using smoothedState
-  drawJewelryFromState(smoothedState, canvasCtx, smoothedLandmarks);
-
-  // segmentation (throttled) in background
-  await ensureBodyPixLoaded();
-  runBodyPixIfNeeded();
-
-  // composite occlusion if segmentation available
-  if (lastPersonSegmentation && lastPersonSegmentation.data) {
-    compositeHeadOcclusion(canvasCtx, smoothedLandmarks, lastPersonSegmentation);
-  } else {
-    drawWatermark(canvasCtx);
+  if (now - lastGestureTime > 100) {
+      previousHandX = currentX;
   }
 });
 
-/* Camera init */
-const camera = new Camera(videoElement, {
-  onFrame: async () => { await faceMesh.send({ image: videoElement }); },
-  width: 1280, height: 720
+/* ---------- FACE MESH ---------- */
+const faceMesh = new FaceMesh({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
 });
-videoElement.addEventListener('loadedmetadata', () => {
+
+faceMesh.setOptions({ refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
+faceMesh.onResults((results) => {
+  isProcessingFace = false;
+  
+  if(loadingStatus.style.display !== 'none' && loadingStatus.textContent === "Loading AI Models...") {
+      loadingStatus.style.display = 'none';
+  }
+
   canvasElement.width = videoElement.videoWidth;
   canvasElement.height = videoElement.videoHeight;
+  
+  canvasCtx.save();
+  canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+  
+  canvasCtx.translate(canvasElement.width, 0);
+  canvasCtx.scale(-1, 1);
+
+  if (results.multiFaceLandmarks && results.multiFaceLandmarks[0]) {
+    const lm = results.multiFaceLandmarks[0];
+    
+    const leftEar = { x: lm[132].x * canvasElement.width, y: lm[132].y * canvasElement.height };
+    const rightEar = { x: lm[361].x * canvasElement.width, y: lm[361].y * canvasElement.height };
+    const neck = { x: lm[152].x * canvasElement.width, y: lm[152].y * canvasElement.height };
+    const earDist = Math.hypot(rightEar.x - leftEar.x, rightEar.y - leftEar.y);
+
+    if (earringImg && earringImg.complete) {
+      let ew = earDist * 0.25;
+      let eh = (earringImg.height/earringImg.width) * ew;
+      canvasCtx.drawImage(earringImg, leftEar.x - ew/2, leftEar.y, ew, eh);
+      canvasCtx.drawImage(earringImg, rightEar.x - ew/2, rightEar.y, ew, eh);
+    }
+    
+    if (necklaceImg && necklaceImg.complete) {
+      let nw = earDist * 1.2;
+      let nh = (necklaceImg.height/necklaceImg.width) * nw;
+      canvasCtx.drawImage(necklaceImg, neck.x - nw/2, neck.y + (earDist*0.2), nw, nh);
+    }
+  }
+  canvasCtx.restore();
 });
-camera.start();
 
-/* ========== drawJewelryFromState (uses smoothed state) ========== */
-function drawJewelryFromState(state, context, landmarksForScale) {
-  const ctx = context || canvasCtx;
-  const cw = ctx.canvas.width; const ch = ctx.canvas.height;
-
-  const leftEar = state.leftEar;
-  const rightEar = state.rightEar;
-  const neckPoint = state.neckPoint;
-  const earDist = state.earDist || Math.hypot(rightEar.x - leftEar.x, rightEar.y - leftEar.y);
-  const angle = state.angle || 0;
-
-  // earrings
-  if (earringImg && landmarksForScale) {
-    const eWidth = earDist * 0.18;
-    const eHeight = (earringImg.height / earringImg.width) * eWidth;
-    ctx.drawImage(earringImg, leftEar.x - eWidth/2, leftEar.y - eHeight*0.15, eWidth, eHeight);
-    ctx.drawImage(earringImg, rightEar.x - eWidth/2, rightEar.y - eHeight*0.15, eWidth, eHeight);
-  }
-
-  // necklace
-  if (necklaceImg && landmarksForScale) {
-    const desiredWidth = earDist * NECK_SCALE_MULTIPLIER;
-    const desiredHeight = (necklaceImg.height / necklaceImg.width) * desiredWidth;
-    const yOffset = earDist * NECK_Y_OFFSET_FACTOR;
-    const centerX = neckPoint.x + (earDist * NECK_X_OFFSET_FACTOR);
-    const centerY = neckPoint.y + yOffset;
-
-    ctx.save();
-    ctx.translate(centerX, centerY);
-    ctx.rotate(angle);
-    ctx.drawImage(necklaceImg, -desiredWidth/2, -desiredHeight/2, desiredWidth, desiredHeight);
-    ctx.restore();
-  }
-
-  // watermark
-  drawWatermark(ctx);
-}
-
-/* draw watermark helper */
-function drawWatermark(ctx) {
-  try {
-    if (watermarkImg && watermarkImg.naturalWidth) {
-      const cw = ctx.canvas.width; const ch = ctx.canvas.height;
-      const wmWidth = Math.round(cw * 0.22);
-      const wmHeight = Math.round((watermarkImg.height / watermarkImg.width) * wmWidth);
-      const padding = Math.round(cw * 0.02);
-      ctx.globalAlpha = 0.85;
-      ctx.drawImage(watermarkImg, cw - wmWidth - padding, ch - wmHeight - padding, wmWidth, wmHeight);
-      ctx.globalAlpha = 1.0;
+/* ---------- FAST CAMERA INIT & LOOP ---------- */
+async function startCameraFast() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: "user"
+            }
+        });
+        
+        videoElement.srcObject = stream;
+        
+        videoElement.onloadeddata = () => {
+            videoElement.play();
+            loadingStatus.textContent = "Loading AI Models...";
+            detectLoop(); 
+        };
+    } catch (err) {
+        console.error("Camera Error:", err);
+        alert("Camera permission denied or not found. Please allow camera access.");
+        loadingStatus.textContent = "Camera Error";
     }
-  } catch (e) { console.warn("Watermark draw failed:", e); }
 }
 
-/* ========== Occlusion composite functions ========== */
-/* Composite head region from video on top of jewelry according to segmentation */
-function compositeHeadOcclusion(mainCtx, landmarks, personSeg) {
-  try {
-    const segData = personSeg.data; const segW = personSeg.width; const segH = personSeg.height;
-    // head bounding box from a few face landmarks
-    const indices = [10, 151, 9, 197, 195, 4];
-    let minX = 1, minY = 1, maxX = 0, maxY = 0;
-    indices.forEach(i => { const x = landmarks[i].x, y = landmarks[i].y; if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y; });
-    const padX = 0.18 * (maxX - minX); const padY = 0.40 * (maxY - minY);
-    const boxLeft = Math.max(0, (minX - padX) * canvasElement.width);
-    const boxTop  = Math.max(0, (minY - padY) * canvasElement.height);
-    const boxRight= Math.min(canvasElement.width, (maxX + padX) * canvasElement.width);
-    const boxBottom=Math.min(canvasElement.height, (maxY + padY) * canvasElement.height);
-    const boxW = Math.max(0, boxRight - boxLeft); const boxH = Math.max(0, boxBottom - boxTop);
-    if (boxW <= 0 || boxH <= 0) { drawWatermark(mainCtx); return; }
-
-    const off = document.createElement('canvas'); off.width = canvasElement.width; off.height = canvasElement.height;
-    const offCtx = off.getContext('2d');
-    try { offCtx.drawImage(videoElement, 0, 0, off.width, off.height); } catch (e) { drawWatermark(mainCtx); return; }
-
-    const imgData = offCtx.getImageData(boxLeft, boxTop, boxW, boxH);
-    const dstData = mainCtx.getImageData(boxLeft, boxTop, boxW, boxH);
-    const sx = segW / canvasElement.width; const sy = segH / canvasElement.height;
-
-    for (let y = 0; y < boxH; y++) {
-      const segY = Math.floor((boxTop + y) * sy);
-      if (segY < 0 || segY >= segH) continue;
-      for (let x = 0; x < boxW; x++) {
-        const segX = Math.floor((boxLeft + x) * sx);
-        if (segX < 0 || segX >= segW) continue;
-        const segIdx = segY * segW + segX;
-        if (segData[segIdx] === 1) {
-          const i = (y * boxW + x) * 4;
-          dstData.data[i]   = imgData.data[i];
-          dstData.data[i+1] = imgData.data[i+1];
-          dstData.data[i+2] = imgData.data[i+2];
-          dstData.data[i+3] = imgData.data[i+3];
+async function detectLoop() {
+    if (videoElement.readyState >= 2) {
+        if (!isProcessingFace) {
+            isProcessingFace = true;
+            await faceMesh.send({image: videoElement});
         }
-      }
+        if (!isProcessingHand) {
+            isProcessingHand = true;
+            await hands.send({image: videoElement});
+        }
     }
-    mainCtx.putImageData(dstData, boxLeft, boxTop);
-    drawWatermark(mainCtx);
-  } catch (e) { console.warn("compositeHeadOcclusion failed:", e); drawWatermark(mainCtx); }
+    requestAnimationFrame(detectLoop);
 }
 
-/* ========== Snapshot, Try-All, Gallery, Share logic ========== */
-function triggerFlash() { if (!flashOverlay) return; flashOverlay.classList.add('active'); setTimeout(() => flashOverlay.classList.remove('active'), 180); }
+window.onload = startCameraFast;
 
-async function takeSnapshot() {
-  if (!smoothedLandmarks) { alert("Face not detected. Please try again."); return; }
-  await ensureWatermarkLoaded();
-  triggerFlash();
+/* ---------- NAVIGATION & SELECTION ---------- */
+function navigateJewelry(dir) {
+  if (!currentType || !PRELOADED_IMAGES[currentType]) return;
+  
+  const list = PRELOADED_IMAGES[currentType];
+  let currentImg = currentType.includes('earrings') ? earringImg : necklaceImg;
+  
+  let idx = list.indexOf(currentImg);
+  // If current image not found (e.g. first run), start at -1
+  if (idx === -1) idx = 0; 
 
-  const snapshotCanvas = document.createElement('canvas');
-  snapshotCanvas.width = canvasElement.width; snapshotCanvas.height = canvasElement.height;
-  const ctx = snapshotCanvas.getContext('2d');
+  let nextIdx = (idx + dir + list.length) % list.length;
+  
+  const nextItem = list[nextIdx];
+  if (currentType.includes('earrings')) earringImg = nextItem;
+  else necklaceImg = nextItem;
+}
 
-  try { ctx.drawImage(videoElement, 0, 0, snapshotCanvas.width, snapshotCanvas.height); } catch (e) { console.warn("Snapshot video draw failed:", e); }
-  // draw jewelry onto snapshot using smoothedState
-  drawJewelryFromState(smoothedState, ctx, smoothedLandmarks);
+// Updated selectJewelryType to be async to handle fetching
+async function selectJewelryType(type) {
+  currentType = type;
+  
+  // Wait for data and images to load
+  await preloadCategory(type); 
+  
+  const container = document.getElementById('jewelry-options');
+  container.innerHTML = '';
+  container.style.display = 'flex';
+  
+  // Use loaded assets
+  const files = JEWELRY_ASSETS[type];
+  if (!files) return;
 
-  // try occlusion with last segmentation
-  if (lastPersonSegmentation && lastPersonSegmentation.data) {
-    compositeSnapshotHeadOcclusion(snapshotCanvas, ctx, smoothedLandmarks, lastPersonSegmentation);
+  files.forEach((file, i) => {
+    const btnImg = new Image();
+    btnImg.src = file.src; // Using the Drive URL
+    btnImg.crossOrigin = 'anonymous';
+    btnImg.className = "thumb-btn"; 
+    btnImg.onclick = () => {
+        // PRELOADED_IMAGES corresponds index-wise to JEWELRY_ASSETS
+        const fullImg = PRELOADED_IMAGES[type][i];
+        if (type.includes('earrings')) earringImg = fullImg;
+        else necklaceImg = fullImg;
+    };
+    container.appendChild(btnImg);
+  });
+}
+
+function toggleCategory(cat) {
+  document.getElementById('subcategory-buttons').style.display = 'flex';
+  const subs = document.querySelectorAll('.subpill');
+  subs.forEach(b => b.style.display = b.innerText.toLowerCase().includes(cat) ? 'inline-block' : 'none');
+}
+
+/* ---------- TRY ALL (AUTO CAPTURE) ---------- */
+async function toggleTryAll() {
+  if (!currentType) {
+    alert("Please select a sub-category (e.g. Gold Earrings) first!");
+    return;
+  }
+  
+  if (autoTryRunning) {
+    stopAutoTry();
   } else {
-    drawWatermark(ctx);
+    startAutoTry();
   }
-
-  lastSnapshotDataURL = snapshotCanvas.toDataURL('image/png');
-  document.getElementById('snapshot-preview').src = lastSnapshotDataURL;
-  document.getElementById('snapshot-modal').style.display = 'block';
 }
 
-function saveSnapshot() {
-  const link = document.createElement('a'); link.href = lastSnapshotDataURL; link.download = `jewelry-tryon-${Date.now()}.png`;
-  document.body.appendChild(link); link.click(); document.body.removeChild(link);
+function startAutoTry() {
+  autoTryRunning = true;
+  autoSnapshots = [];
+  autoTryIndex = 0;
+  
+  const btn = document.getElementById('tryall-btn');
+  btn.textContent = "STOPPING...";
+  btn.classList.add('active');
+  
+  runAutoStep();
 }
 
-async function shareSnapshot() {
-  if (!navigator.share || !navigator.canShare) { alert('Sharing not supported on this device.'); return; }
-  const resp = await fetch(lastSnapshotDataURL); const blob = await resp.blob();
-  const file = new File([blob], 'jewelry-tryon.png', { type: 'image/png' });
-  await navigator.share({ title: 'Jewelry Try-On', text: 'Check out my look!', files: [file] });
-}
-
-function closeSnapshotModal() { document.getElementById('snapshot-modal').style.display = 'none'; }
-
-function compositeSnapshotHeadOcclusion(snapshotCanvas, ctx, landmarks, personSeg) {
-  try {
-    const segData = personSeg.data; const segW = personSeg.width; const segH = personSeg.height;
-    const indices = [10, 151, 9, 197, 195, 4];
-    let minX = 1, minY = 1, maxX = 0, maxY = 0;
-    indices.forEach(i => { const x = landmarks[i].x, y = landmarks[i].y; if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y; });
-    const padX = 0.18 * (maxX - minX); const padY = 0.40 * (maxY - minY);
-    const boxLeft = Math.max(0, (minX - padX) * snapshotCanvas.width);
-    const boxTop  = Math.max(0, (minY - padY) * snapshotCanvas.height);
-    const boxRight= Math.min(snapshotCanvas.width, (maxX + padX) * snapshotCanvas.width);
-    const boxBottom=Math.min(snapshotCanvas.height, (maxY + padY) * snapshotCanvas.height);
-    const boxW = Math.max(0, boxRight - boxLeft); const boxH = Math.max(0, boxBottom - boxTop);
-    if (boxW <= 0 || boxH <= 0) { drawWatermark(ctx); return; }
-
-    const off = document.createElement('canvas'); off.width = snapshotCanvas.width; off.height = snapshotCanvas.height;
-    const offCtx = off.getContext('2d'); offCtx.drawImage(videoElement, 0, 0, off.width, off.height);
-
-    const imgData = offCtx.getImageData(boxLeft, boxTop, boxW, boxH);
-    const dstData = ctx.getImageData(boxLeft, boxTop, boxW, boxH);
-    const sx = segW / snapshotCanvas.width; const sy = segH / snapshotCanvas.height;
-
-    for (let y = 0; y < boxH; y++) {
-      const segY = Math.floor((boxTop + y) * sy); if (segY < 0 || segY >= segH) continue;
-      for (let x = 0; x < boxW; x++) {
-        const segX = Math.floor((boxLeft + x) * sx); if (segX < 0 || segX >= segW) continue;
-        const segIdx = segY * segW + segX;
-        if (segData[segIdx] === 1) {
-          const i = (y * boxW + x) * 4;
-          dstData.data[i]   = imgData.data[i];
-          dstData.data[i+1] = imgData.data[i+1];
-          dstData.data[i+2] = imgData.data[i+2];
-          dstData.data[i+3] = imgData.data[i+3];
-        }
-      }
-    }
-    ctx.putImageData(dstData, boxLeft, boxTop);
-    drawWatermark(ctx);
-  } catch (e) { console.warn("compositeSnapshotHeadOcclusion failed:", e); drawWatermark(ctx); }
-}
-
-/* TRY ALL */
 function stopAutoTry() {
   autoTryRunning = false;
   if (autoTryTimeout) clearTimeout(autoTryTimeout);
-  autoTryTimeout = null;
-  if (tryAllBtn) { tryAllBtn.classList.remove('active'); tryAllBtn.textContent = 'Try All'; }
+  
+  const btn = document.getElementById('tryall-btn');
+  btn.textContent = "Try All";
+  btn.classList.remove('active');
+  
+  if (autoSnapshots.length > 0) showGallery();
 }
-function toggleTryAll() { if (autoTryRunning) stopAutoTry(); else startAutoTry(); }
 
-async function startAutoTry() {
-  if (!currentType) { alert('Please choose Gold / Diamond and a jewelry type first.'); return; }
-  const list = buildImageList(currentType);
-  if (!list.length) { alert('No items found for this category.'); return; }
+async function runAutoStep() {
+  if (!autoTryRunning) return;
 
-  autoSnapshots = []; autoTryIndex = 0; autoTryRunning = true;
-  tryAllBtn.classList.add('active'); tryAllBtn.textContent = 'Stop';
+  const assets = PRELOADED_IMAGES[currentType];
+  if (!assets || autoTryIndex >= assets.length) {
+    stopAutoTry();
+    return;
+  }
 
-  const step = async () => {
-    if (!autoTryRunning) return;
-    const src = list[autoTryIndex];
-    if (currentType.includes('earrings')) await changeEarring(src); else await changeNecklace(src);
+  const targetImg = assets[autoTryIndex];
+  if (currentType.includes('earrings')) earringImg = targetImg;
+  else necklaceImg = targetImg;
 
-    await new Promise(res => setTimeout(res, 800));
-    triggerFlash();
-    if (smoothedLandmarks) {
-      const snapshotCanvas = document.createElement('canvas');
-      snapshotCanvas.width = canvasElement.width; snapshotCanvas.height = canvasElement.height;
-      const ctx = snapshotCanvas.getContext('2d');
-      try { ctx.drawImage(videoElement, 0, 0, snapshotCanvas.width, snapshotCanvas.height); } catch (e) { console.warn("AutoTry video draw failed:", e); }
-      drawJewelryFromState(smoothedState, ctx, smoothedLandmarks);
-      await ensureBodyPixLoaded(); await runBodyPixIfNeeded();
-      if (lastPersonSegmentation && lastPersonSegmentation.data) compositeSnapshotHeadOcclusion(snapshotCanvas, ctx, smoothedLandmarks, lastPersonSegmentation);
-      else drawWatermark(ctx);
-      autoSnapshots.push(snapshotCanvas.toDataURL('image/png'));
-    }
-
+  autoTryTimeout = setTimeout(() => {
+    captureToGallery();
     autoTryIndex++;
-    if (autoTryIndex >= list.length) { stopAutoTry(); openGallery(); return; }
-    autoTryTimeout = setTimeout(step, 2000);
-  };
-  step();
+    runAutoStep();
+  }, 1500); 
 }
 
-/* GALLERY */
-function openGallery() {
-  if (!autoSnapshots.length) { alert('No snapshots captured.'); return; }
-  galleryThumbs.innerHTML = '';
-  autoSnapshots.forEach((src, idx) => {
+/* ---------- CAPTURE + WATERMARK + TEXT (FROM DRIVE FILENAME) ---------- */
+function captureToGallery() {
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = videoElement.videoWidth;
+  tempCanvas.height = videoElement.videoHeight;
+  const tempCtx = tempCanvas.getContext('2d');
+  
+  // 1. Draw Video (Mirrored)
+  tempCtx.translate(tempCanvas.width, 0);
+  tempCtx.scale(-1, 1);
+  tempCtx.drawImage(videoElement, 0, 0);
+  
+  // 2. Draw Jewelry Overlay (Reset transform first)
+  tempCtx.setTransform(1, 0, 0, 1, 0, 0); 
+  try {
+      tempCtx.drawImage(canvasElement, 0, 0);
+  } catch(e) {
+      console.warn("Canvas Tainted - CORS issue with Drive Images possibly.");
+  }
+
+  // --- DYNAMIC NAME GENERATION ---
+  let itemName = "Aurum Look";
+  let itemFilename = "aurum_look.png";
+  
+  if (currentType && PRELOADED_IMAGES[currentType]) {
+      const list = PRELOADED_IMAGES[currentType];
+      let currentImg = currentType.includes('earrings') ? earringImg : necklaceImg;
+      let idx = list.indexOf(currentImg);
+      
+      // Look up original filename from ASSETS using index
+      if(idx >= 0 && JEWELRY_ASSETS[currentType][idx]) {
+          const rawFilename = JEWELRY_ASSETS[currentType][idx].name;
+          
+          // Clean up filename for display (remove extension, replace _ with space)
+          const nameOnly = rawFilename.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
+          
+          // Capitalize first letters
+          itemName = nameOnly.replace(/\b\w/g, l => l.toUpperCase());
+          
+          // Create download filename
+          itemFilename = `Aurum_${rawFilename}`;
+      }
+  }
+
+  // 3. Draw Text (Bottom Left)
+  const padding = 20; 
+  tempCtx.font = "bold 24px Montserrat, sans-serif";
+  tempCtx.textAlign = "left";
+  tempCtx.textBaseline = "bottom";
+  
+  // Text Shadow
+  tempCtx.fillStyle = "rgba(0,0,0,0.8)";
+  tempCtx.fillText(itemName, padding + 2, tempCanvas.height - padding + 2);
+  
+  // Text Main
+  tempCtx.fillStyle = "#ffffff";
+  tempCtx.fillText(itemName, padding, tempCanvas.height - padding);
+
+  // 4. Draw Watermark (Bottom Right)
+  if (watermarkImg.complete && watermarkImg.naturalWidth > 0) {
+      const wWidth = tempCanvas.width * 0.25; 
+      const wHeight = (watermarkImg.height / watermarkImg.width) * wWidth;
+      
+      const wX = tempCanvas.width - wWidth - padding;
+      const wY = tempCanvas.height - wHeight - padding;
+      
+      tempCtx.globalAlpha = 0.9; 
+      tempCtx.drawImage(watermarkImg, wX, wY, wWidth, wHeight);
+      tempCtx.globalAlpha = 1.0;
+  }
+  
+  const dataUrl = tempCanvas.toDataURL('image/png');
+  autoSnapshots.push(dataUrl);
+  
+  const flash = document.getElementById('flash-overlay');
+  if(flash) {
+    flash.classList.add('active');
+    setTimeout(() => flash.classList.remove('active'), 100);
+  }
+  
+  return { url: dataUrl, name: itemFilename }; 
+}
+
+function takeSnapshot() {
+    const shotData = captureToGallery();
+    openSinglePreview(shotData);
+}
+
+/* ---------- SINGLE PREVIEW ---------- */
+function openSinglePreview(shotData) {
+    currentPreviewData = shotData; 
+    
+    const modal = document.getElementById('preview-modal');
+    const img = document.getElementById('preview-image');
+    
+    img.src = shotData.url;
+    modal.style.display = 'flex';
+}
+
+function closePreview() {
+    document.getElementById('preview-modal').style.display = 'none';
+}
+
+function downloadSingleSnapshot() {
+    if(currentPreviewData && currentPreviewData.url) {
+        saveAs(currentPreviewData.url, currentPreviewData.name);
+    }
+}
+
+async function shareSingleSnapshot() {
+    if(!currentPreviewData.url) return;
+    
+    const response = await fetch(currentPreviewData.url);
+    const blob = await response.blob();
+    
+    const file = new File([blob], currentPreviewData.name, { type: "image/png" });
+    
+    if (navigator.share) {
+        try {
+            await navigator.share({
+                title: 'My Aurum Atelier Look',
+                text: 'Check out this jewelry I tried on virtually!',
+                files: [file]
+            });
+        } catch (err) {
+            console.warn("Share failed:", err);
+        }
+    } else {
+        alert("Sharing is not supported on this browser. Please use Download.");
+    }
+}
+
+/* ---------- GALLERY & LIGHTBOX ---------- */
+function showGallery() {
+  const modal = document.getElementById('gallery-modal');
+  const grid = document.getElementById('gallery-grid');
+  if(!modal || !grid) return;
+
+  grid.innerHTML = '';
+  
+  autoSnapshots.forEach((src, index) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = "gallery-item-wrapper";
+    
     const img = document.createElement('img');
     img.src = src;
-    img.onclick = () => setGalleryMain(idx);
-    galleryThumbs.appendChild(img);
+    img.className = "gallery-thumb";
+    
+    img.onclick = () => openLightbox(index);
+    
+    wrapper.appendChild(img);
+    grid.appendChild(wrapper);
   });
-  setGalleryMain(0);
-  galleryModal.style.display = 'flex';
-}
-function setGalleryMain(index) {
-  const src = autoSnapshots[index];
-  galleryMain.src = src;
-  const thumbs = galleryThumbs.querySelectorAll('img');
-  thumbs.forEach((t, i) => t.classList.toggle('active', i === index));
-}
-if (galleryClose) galleryClose.addEventListener('click', () => { galleryModal.style.display = 'none'; });
-
-/* DOWNLOAD & SHARE */
-async function downloadAllImages() {
-  if (!autoSnapshots.length) { alert("No images to download."); return; }
-  const zip = new JSZip(); const folder = zip.folder("Your_Looks");
-  for (let i = 0; i < autoSnapshots.length; i++) {
-    const dataURL = autoSnapshots[i]; const base64Data = dataURL.split(",")[1];
-    folder.file(`look_${i + 1}.png`, base64Data, { base64: true });
-  }
-  const content = await zip.generateAsync({ type: "blob" });
-  saveAs(content, "OverlayJewels_Looks.zip");
-}
-async function shareCurrentFromGallery() {
-  if (!galleryMain.src) { alert("No image selected."); return; }
-  if (!navigator.share || !navigator.canShare) { alert("Sharing not supported on this device."); return; }
-  const resp = await fetch(galleryMain.src); const blob = await resp.blob();
-  const file = new File([blob], 'jewelry-look.png', { type: 'image/png' });
-  await navigator.share({ title: 'Jewelry Try-On', text: 'Check out my jewellery look!', files: [file] });
+  
+  modal.style.display = 'flex';
 }
 
-/* share/save helpers */
-function saveSnapshot() {
-  const link = document.createElement('a'); link.href = lastSnapshotDataURL; link.download = `jewelry-tryon-${Date.now()}.png`;
-  document.body.appendChild(link); link.click(); document.body.removeChild(link);
-}
-async function shareSnapshot() {
-  if (!navigator.share || !navigator.canShare) { alert('Sharing not supported on this device.'); return; }
-  const resp = await fetch(lastSnapshotDataURL); const blob = await resp.blob();
-  const file = new File([blob], 'jewelry-tryon.png', { type: 'image/png' });
-  await navigator.share({ title: 'Jewelry Try-On', text: 'Check out my look!', files: [file] });
-}
-function closeSnapshotModal() { document.getElementById('snapshot-modal').style.display = 'none'; }
+function openLightbox(selectedIndex) {
+    const lightbox = document.getElementById('lightbox-overlay');
+    const lightboxImg = document.getElementById('lightbox-image');
+    const strip = document.getElementById('lightbox-thumbs');
+    
+    lightboxImg.src = autoSnapshots[selectedIndex];
+    
+    strip.innerHTML = '';
+    
+    autoSnapshots.forEach((src, idx) => {
+        const thumb = document.createElement('img');
+        thumb.src = src;
+        thumb.className = "strip-thumb";
+        if(idx === selectedIndex) thumb.classList.add('active');
+        
+        thumb.onclick = () => {
+            lightboxImg.src = src;
+            document.querySelectorAll('.strip-thumb').forEach(t => t.classList.remove('active'));
+            thumb.classList.add('active');
+        };
+        
+        strip.appendChild(thumb);
+    });
 
-/* Info modal */
-function toggleInfoModal() { const modal = document.getElementById('info-modal'); modal.style.display = modal.style.display === 'block' ? 'none' : 'block'; }
+    lightbox.style.display = 'flex';
+}
 
-/* expose globals */
+function closeLightbox() {
+    document.getElementById('lightbox-overlay').style.display = 'none';
+}
+
+function closeGallery() {
+  document.getElementById('gallery-modal').style.display = 'none';
+}
+
+/* ---------- ZIP DOWNLOAD ---------- */
+function downloadAllAsZip() {
+    if (autoSnapshots.length === 0) {
+        alert("No images to download!");
+        return;
+    }
+
+    const overlay = document.getElementById('process-overlay');
+    const spinner = document.getElementById('process-spinner');
+    const success = document.getElementById('process-success');
+    const text = document.getElementById('process-text');
+
+    overlay.style.display = 'flex';
+    spinner.style.display = 'block';
+    success.style.display = 'none';
+    text.innerText = "Packaging Collection...";
+
+    const zip = new JSZip();
+    const folder = zip.folder("Aurum_Collection");
+
+    autoSnapshots.forEach((dataUrl, index) => {
+        const base64Data = dataUrl.replace(/^data:image\/(png|jpg);base64,/, "");
+        folder.file(`look_${index + 1}.png`, base64Data, {base64: true});
+    });
+
+    zip.generateAsync({type:"blob"})
+    .then(function(content) {
+        saveAs(content, "Aurum_Collection.zip");
+
+        spinner.style.display = 'none';
+        success.style.display = 'block';
+        text.innerText = "Download Started!";
+
+        setTimeout(() => {
+            overlay.style.display = 'none';
+        }, 2000);
+    });
+}
+
+/* ---------- INITIALIZATION ---------- */
 window.toggleCategory = toggleCategory;
 window.selectJewelryType = selectJewelryType;
-window.takeSnapshot = takeSnapshot;
-window.saveSnapshot = saveSnapshot;
-window.shareSnapshot = shareSnapshot;
-window.closeSnapshotModal = closeSnapshotModal;
-window.toggleInfoModal = toggleInfoModal;
 window.toggleTryAll = toggleTryAll;
-window.downloadAllImages = downloadAllImages;
-window.shareCurrentFromGallery = shareCurrentFromGallery;
+window.closeGallery = closeGallery;
+window.closeLightbox = closeLightbox;
+window.takeSnapshot = takeSnapshot;
+window.downloadAllAsZip = downloadAllAsZip;
+window.closePreview = closePreview;
+window.downloadSingleSnapshot = downloadSingleSnapshot;
+window.shareSingleSnapshot = shareSingleSnapshot;
+
+/* ===========================
+   DISABLE RIGHT CLICK & DEV TOOLS
+   ============================ */
+document.addEventListener('contextmenu', (e) => e.preventDefault());
+document.onkeydown = function(e) {
+  if (e.keyCode === 123) return false; // F12
+  if (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74 || e.keyCode === 67 || e.keyCode === 75)) return false;
+  if (e.ctrlKey && e.keyCode === 85) return false; // Ctrl+U
+};
