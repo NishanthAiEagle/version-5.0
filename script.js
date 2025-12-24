@@ -1,4 +1,4 @@
-/* script.js - Aurum Atelier: Google Drive Integration */
+/* script.js - Aurum Atelier: Google Drive Integration (Fixed) */
 
 /* --- GOOGLE DRIVE CONFIGURATION --- */
 const API_KEY = "AIzaSyBhi05HMVGg90dPP91zG1RZtNxm-d6hnQw"; 
@@ -11,13 +11,12 @@ const DRIVE_FOLDERS = {
 };
 
 /* Asset Cache to store fetched Drive data */
-/* Structure: { categoryName: [ { id: '...', name: '...', src: '...' }, ... ] } */
 const JEWELRY_ASSETS = {};
-const PRELOADED_IMAGES = {}; // Holds actual Image objects
+const PRELOADED_IMAGES = {}; 
 
 /* --- 1. PRELOAD WATERMARK --- */
 const watermarkImg = new Image();
-watermarkImg.src = 'logo_watermark.png'; // Ensure this file exists locally or serves from a URL
+watermarkImg.src = 'logo_watermark.png'; 
 
 /* DOM Elements */
 const videoElement = document.getElementById('webcam');
@@ -49,7 +48,7 @@ let autoTryIndex = 0;
 let autoTryTimeout = null;
 let currentPreviewData = { url: null, name: 'aurum_look.png' }; 
 
-/* --- GOOGLE DRIVE API FETCH --- */
+/* --- GOOGLE DRIVE API FETCH (UPDATED FIX) --- */
 async function fetchFromDrive(category) {
     // If we already have the data, don't fetch again
     if (JEWELRY_ASSETS[category]) return;
@@ -64,9 +63,9 @@ async function fetchFromDrive(category) {
     loadingStatus.textContent = "Fetching Designs...";
 
     try {
-        // Fetch files from Drive Folder
+        // CHANGED: We now request 'thumbnailLink' in the fields
         const query = `'${folderId}' in parents and trashed = false and mimeType contains 'image/'`;
-        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)&key=${API_KEY}`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,thumbnailLink)&key=${API_KEY}`;
         
         const response = await fetch(url);
         const data = await response.json();
@@ -75,20 +74,27 @@ async function fetchFromDrive(category) {
             throw new Error(data.error.message);
         }
 
-        // Map Drive files to our asset structure
-        JEWELRY_ASSETS[category] = data.files.map(file => ({
-            id: file.id,
-            name: file.name,
-            // Construct a direct view URL
-            src: `https://drive.google.com/uc?export=view&id=${file.id}`
-        }));
+        // Map Drive files using the High-Res Thumbnail Hack
+        JEWELRY_ASSETS[category] = data.files.map(file => {
+            // If thumbnailLink exists, replace the size parameter (=s220) with (=s3000) to get full resolution
+            // This bypasses many CORS issues associated with the standard export=view link
+            const highResSource = file.thumbnailLink 
+                ? file.thumbnailLink.replace(/=s\d+$/, "=s3000") 
+                : `https://drive.google.com/uc?export=view&id=${file.id}`;
+
+            return {
+                id: file.id,
+                name: file.name,
+                src: highResSource
+            };
+        });
 
         loadingStatus.style.display = 'none';
 
     } catch (err) {
         console.error("Drive API Error:", err);
         loadingStatus.textContent = "Error Loading Images";
-        alert("Failed to load images from Google Drive. Check console for details.");
+        alert("Failed to load images from Google Drive. Check console (F12) for details.");
     }
 }
 
@@ -109,7 +115,10 @@ async function preloadCategory(type) {
                 const img = new Image();
                 img.crossOrigin = 'anonymous'; // Important for Canvas
                 img.onload = () => resolve(img);
-                img.onerror = () => resolve(null); // Resolve even on error to keep moving
+                img.onerror = () => {
+                    console.warn(`Failed to load image: ${file.name}`);
+                    resolve(null); // Resolve even on error to keep moving
+                };
                 img.src = file.src;
                 PRELOADED_IMAGES[type].push(img);
             });
