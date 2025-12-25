@@ -1,11 +1,11 @@
 /* script.js - Aurum Atelier: Google Drive Integration (Fixed) */
 
 /* --- GOOGLE DRIVE CONFIGURATION --- */
-const API_KEY = "AIzaSyBhi05HMVGg90dPP91zG1RZtNxm-d6hnQw"; 
+const API_KEY = "AIzaSyB40AXOyJA6ooHBrh3aO0ajTFSf50rmzMQ"; 
 
 const DRIVE_FOLDERS = {
-  diamond_earrings: "1N0jndAEIThUuuNAJpvuRMGsisIaXCgMZ",
-  diamond_necklaces: "1JGV8T03YdzjfW0Dyt9aMPybH8V9-gEhw",
+  diamond_earrings: "1RSIyBfLhw5eVzkC8pia-eG4Y196WkkLa",
+  diamond_necklaces: "1YA6lusQg-ZbRi3zJXVhCAKTSG73uGswm",
   gold_earrings: "1GMZpcv4A1Gy2xiaIC1XPG_IOAt9NrDpi",
   gold_necklaces: "1QIvX-PrSVrK9gz-TEksqiKlXPGv2hsS5"
 };
