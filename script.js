@@ -1,11 +1,11 @@
-/* script.js - Aurum Atelier: Google Drive Integration (Fixed) */
+/* script.js - Aurum Atelier: Google Drive Integration (Actual Filenames) */
 
 /* --- GOOGLE DRIVE CONFIGURATION --- */
-const API_KEY = "AIzaSyB40AXOyJA6ooHBrh3aO0ajTFSf50rmzMQ"; 
+const API_KEY = "AIzaSyBhi05HMVGg90dPP91zG1RZtNxm-d6hnQw"; 
 
 const DRIVE_FOLDERS = {
-  diamond_earrings: "1RSIyBfLhw5eVzkC8pia-eG4Y196WkkLa",
-  diamond_necklaces: "1YA6lusQg-ZbRi3zJXVhCAKTSG73uGswm",
+  diamond_earrings: "1N0jndAEIThUuuNAJpvuRMGsisIaXCgMZ",
+  diamond_necklaces: "1JGV8T03YdzjfW0Dyt9aMPybH8V9-gEhw",
   gold_earrings: "1GMZpcv4A1Gy2xiaIC1XPG_IOAt9NrDpi",
   gold_necklaces: "1QIvX-PrSVrK9gz-TEksqiKlXPGv2hsS5"
 };
@@ -43,14 +43,13 @@ let previousHandX = null;
 
 /* --- Try All / Gallery State --- */
 let autoTryRunning = false;
-let autoSnapshots = [];
+let autoSnapshots = []; // Now stores objects: { url: "...", name: "..." }
 let autoTryIndex = 0;
 let autoTryTimeout = null;
 let currentPreviewData = { url: null, name: 'aurum_look.png' }; 
 
-/* --- GOOGLE DRIVE API FETCH (UPDATED FIX) --- */
+/* --- GOOGLE DRIVE API FETCH --- */
 async function fetchFromDrive(category) {
-    // If we already have the data, don't fetch again
     if (JEWELRY_ASSETS[category]) return;
 
     const folderId = DRIVE_FOLDERS[category];
@@ -63,7 +62,6 @@ async function fetchFromDrive(category) {
     loadingStatus.textContent = "Fetching Designs...";
 
     try {
-        // CHANGED: We now request 'thumbnailLink' in the fields
         const query = `'${folderId}' in parents and trashed = false and mimeType contains 'image/'`;
         const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,thumbnailLink)&key=${API_KEY}`;
         
@@ -74,10 +72,8 @@ async function fetchFromDrive(category) {
             throw new Error(data.error.message);
         }
 
-        // Map Drive files using the High-Res Thumbnail Hack
+        // Map Drive files using High-Res Thumbnail Hack
         JEWELRY_ASSETS[category] = data.files.map(file => {
-            // If thumbnailLink exists, replace the size parameter (=s220) with (=s3000) to get full resolution
-            // This bypasses many CORS issues associated with the standard export=view link
             const highResSource = file.thumbnailLink 
                 ? file.thumbnailLink.replace(/=s\d+$/, "=s3000") 
                 : `https://drive.google.com/uc?export=view&id=${file.id}`;
@@ -94,18 +90,16 @@ async function fetchFromDrive(category) {
     } catch (err) {
         console.error("Drive API Error:", err);
         loadingStatus.textContent = "Error Loading Images";
-        alert("Failed to load images from Google Drive. Check console (F12) for details.");
+        alert("Failed to load images. Check console (F12).");
     }
 }
 
 /* --- PRELOADER --- */
 async function preloadCategory(type) {
-    // 1. Ensure we have the file list from Drive
     await fetchFromDrive(type);
     
     if (!JEWELRY_ASSETS[type]) return;
 
-    // 2. Preload Image Objects if not done yet
     if (!PRELOADED_IMAGES[type]) {
         PRELOADED_IMAGES[type] = [];
         const files = JEWELRY_ASSETS[type];
@@ -113,18 +107,14 @@ async function preloadCategory(type) {
         const promises = files.map(file => {
             return new Promise((resolve, reject) => {
                 const img = new Image();
-                img.crossOrigin = 'anonymous'; // Important for Canvas
+                img.crossOrigin = 'anonymous'; 
                 img.onload = () => resolve(img);
-                img.onerror = () => {
-                    console.warn(`Failed to load image: ${file.name}`);
-                    resolve(null); // Resolve even on error to keep moving
-                };
+                img.onerror = () => resolve(null); 
                 img.src = file.src;
                 PRELOADED_IMAGES[type].push(img);
             });
         });
 
-        // Wait for all images in this category to load
         loadingStatus.style.display = 'block';
         loadingStatus.textContent = "Downloading Assets...";
         await Promise.all(promises);
@@ -260,7 +250,7 @@ async function startCameraFast() {
         };
     } catch (err) {
         console.error("Camera Error:", err);
-        alert("Camera permission denied or not found. Please allow camera access.");
+        alert("Camera permission denied. Please allow camera access.");
         loadingStatus.textContent = "Camera Error";
     }
 }
@@ -289,7 +279,6 @@ function navigateJewelry(dir) {
   let currentImg = currentType.includes('earrings') ? earringImg : necklaceImg;
   
   let idx = list.indexOf(currentImg);
-  // If current image not found (e.g. first run), start at -1
   if (idx === -1) idx = 0; 
 
   let nextIdx = (idx + dir + list.length) % list.length;
@@ -299,28 +288,24 @@ function navigateJewelry(dir) {
   else necklaceImg = nextItem;
 }
 
-// Updated selectJewelryType to be async to handle fetching
 async function selectJewelryType(type) {
   currentType = type;
   
-  // Wait for data and images to load
   await preloadCategory(type); 
   
   const container = document.getElementById('jewelry-options');
   container.innerHTML = '';
   container.style.display = 'flex';
   
-  // Use loaded assets
   const files = JEWELRY_ASSETS[type];
   if (!files) return;
 
   files.forEach((file, i) => {
     const btnImg = new Image();
-    btnImg.src = file.src; // Using the Drive URL
+    btnImg.src = file.src; 
     btnImg.crossOrigin = 'anonymous';
     btnImg.className = "thumb-btn"; 
     btnImg.onclick = () => {
-        // PRELOADED_IMAGES corresponds index-wise to JEWELRY_ASSETS
         const fullImg = PRELOADED_IMAGES[type][i];
         if (type.includes('earrings')) earringImg = fullImg;
         else necklaceImg = fullImg;
@@ -392,27 +377,27 @@ async function runAutoStep() {
   }, 1500); 
 }
 
-/* ---------- CAPTURE + WATERMARK + TEXT (FROM DRIVE FILENAME) ---------- */
+/* ---------- CAPTURE LOGIC (UPDATED FOR ACTUAL FILENAMES) ---------- */
 function captureToGallery() {
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = videoElement.videoWidth;
   tempCanvas.height = videoElement.videoHeight;
   const tempCtx = tempCanvas.getContext('2d');
   
-  // 1. Draw Video (Mirrored)
+  // 1. Draw Video
   tempCtx.translate(tempCanvas.width, 0);
   tempCtx.scale(-1, 1);
   tempCtx.drawImage(videoElement, 0, 0);
   
-  // 2. Draw Jewelry Overlay (Reset transform first)
+  // 2. Draw Jewelry
   tempCtx.setTransform(1, 0, 0, 1, 0, 0); 
   try {
       tempCtx.drawImage(canvasElement, 0, 0);
   } catch(e) {
-      console.warn("Canvas Tainted - CORS issue with Drive Images possibly.");
+      console.warn("Canvas Tainted");
   }
 
-  // --- DYNAMIC NAME GENERATION ---
+  // --- FILENAME LOGIC ---
   let itemName = "Aurum Look";
   let itemFilename = "aurum_look.png";
   
@@ -421,50 +406,44 @@ function captureToGallery() {
       let currentImg = currentType.includes('earrings') ? earringImg : necklaceImg;
       let idx = list.indexOf(currentImg);
       
-      // Look up original filename from ASSETS using index
       if(idx >= 0 && JEWELRY_ASSETS[currentType][idx]) {
           const rawFilename = JEWELRY_ASSETS[currentType][idx].name;
           
-          // Clean up filename for display (remove extension, replace _ with space)
+          // Display Name: Remove extension, replace _ with space
           const nameOnly = rawFilename.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
-          
-          // Capitalize first letters
           itemName = nameOnly.replace(/\b\w/g, l => l.toUpperCase());
           
-          // Create download filename
-          itemFilename = `Aurum_${rawFilename}`;
+          // File Name: Use Actual Name, but ensure .png extension
+          // We remove the old extension (like .jpg) and append .png to match the canvas data format
+          itemFilename = rawFilename.replace(/\.[^/.]+$/, "") + ".png";
       }
   }
 
-  // 3. Draw Text (Bottom Left)
+  // 3. Draw Text
   const padding = 20; 
   tempCtx.font = "bold 24px Montserrat, sans-serif";
   tempCtx.textAlign = "left";
   tempCtx.textBaseline = "bottom";
   
-  // Text Shadow
   tempCtx.fillStyle = "rgba(0,0,0,0.8)";
   tempCtx.fillText(itemName, padding + 2, tempCanvas.height - padding + 2);
   
-  // Text Main
   tempCtx.fillStyle = "#ffffff";
   tempCtx.fillText(itemName, padding, tempCanvas.height - padding);
 
-  // 4. Draw Watermark (Bottom Right)
+  // 4. Draw Watermark
   if (watermarkImg.complete && watermarkImg.naturalWidth > 0) {
       const wWidth = tempCanvas.width * 0.25; 
       const wHeight = (watermarkImg.height / watermarkImg.width) * wWidth;
-      
       const wX = tempCanvas.width - wWidth - padding;
       const wY = tempCanvas.height - wHeight - padding;
-      
-      tempCtx.globalAlpha = 0.9; 
       tempCtx.drawImage(watermarkImg, wX, wY, wWidth, wHeight);
-      tempCtx.globalAlpha = 1.0;
   }
   
   const dataUrl = tempCanvas.toDataURL('image/png');
-  autoSnapshots.push(dataUrl);
+  
+  // Store object with name for ZIP download
+  autoSnapshots.push({ url: dataUrl, name: itemFilename });
   
   const flash = document.getElementById('flash-overlay');
   if(flash) {
@@ -520,7 +499,7 @@ async function shareSingleSnapshot() {
             console.warn("Share failed:", err);
         }
     } else {
-        alert("Sharing is not supported on this browser. Please use Download.");
+        alert("Sharing not supported. Please Download.");
     }
 }
 
@@ -532,12 +511,13 @@ function showGallery() {
 
   grid.innerHTML = '';
   
-  autoSnapshots.forEach((src, index) => {
+  // Loop through objects now
+  autoSnapshots.forEach((item, index) => {
     const wrapper = document.createElement('div');
     wrapper.className = "gallery-item-wrapper";
     
     const img = document.createElement('img');
-    img.src = src;
+    img.src = item.url; // Access .url
     img.className = "gallery-thumb";
     
     img.onclick = () => openLightbox(index);
@@ -554,18 +534,18 @@ function openLightbox(selectedIndex) {
     const lightboxImg = document.getElementById('lightbox-image');
     const strip = document.getElementById('lightbox-thumbs');
     
-    lightboxImg.src = autoSnapshots[selectedIndex];
+    lightboxImg.src = autoSnapshots[selectedIndex].url; // Access .url
     
     strip.innerHTML = '';
     
-    autoSnapshots.forEach((src, idx) => {
+    autoSnapshots.forEach((item, idx) => {
         const thumb = document.createElement('img');
-        thumb.src = src;
+        thumb.src = item.url; // Access .url
         thumb.className = "strip-thumb";
         if(idx === selectedIndex) thumb.classList.add('active');
         
         thumb.onclick = () => {
-            lightboxImg.src = src;
+            lightboxImg.src = item.url;
             document.querySelectorAll('.strip-thumb').forEach(t => t.classList.remove('active'));
             thumb.classList.add('active');
         };
@@ -584,7 +564,7 @@ function closeGallery() {
   document.getElementById('gallery-modal').style.display = 'none';
 }
 
-/* ---------- ZIP DOWNLOAD ---------- */
+/* ---------- ZIP DOWNLOAD (UPDATED for ACTUAL NAMES) ---------- */
 function downloadAllAsZip() {
     if (autoSnapshots.length === 0) {
         alert("No images to download!");
@@ -604,9 +584,10 @@ function downloadAllAsZip() {
     const zip = new JSZip();
     const folder = zip.folder("Aurum_Collection");
 
-    autoSnapshots.forEach((dataUrl, index) => {
-        const base64Data = dataUrl.replace(/^data:image\/(png|jpg);base64,/, "");
-        folder.file(`look_${index + 1}.png`, base64Data, {base64: true});
+    autoSnapshots.forEach((item, index) => {
+        const base64Data = item.url.replace(/^data:image\/(png|jpg);base64,/, "");
+        // Use the stored actual filename
+        folder.file(item.name, base64Data, {base64: true});
     });
 
     zip.generateAsync({type:"blob"})
@@ -640,7 +621,7 @@ window.shareSingleSnapshot = shareSingleSnapshot;
    ============================ */
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 document.onkeydown = function(e) {
-  if (e.keyCode === 123) return false; // F12
+  if (e.keyCode === 123) return false; 
   if (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74 || e.keyCode === 67 || e.keyCode === 75)) return false;
-  if (e.ctrlKey && e.keyCode === 85) return false; // Ctrl+U
+  if (e.ctrlKey && e.keyCode === 85) return false; 
 };
