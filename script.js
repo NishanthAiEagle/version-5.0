@@ -1,4 +1,4 @@
-/* script.js - Aurum Atelier: Google Drive Integration (Actual Filenames) */
+/* script.js - Jewels-Ai Atelier: Google Drive Integration (Actual Filenames) */
 
 /* --- GOOGLE DRIVE CONFIGURATION --- */
 const API_KEY = "AIzaSyBhi05HMVGg90dPP91zG1RZtNxm-d6hnQw"; 
@@ -46,7 +46,7 @@ let autoTryRunning = false;
 let autoSnapshots = []; // Now stores objects: { url: "...", name: "..." }
 let autoTryIndex = 0;
 let autoTryTimeout = null;
-let currentPreviewData = { url: null, name: 'aurum_look.png' }; 
+let currentPreviewData = { url: null, name: 'Jewels-Ai_look.png' }; 
 
 /* --- GOOGLE DRIVE API FETCH --- */
 async function fetchFromDrive(category) {
@@ -398,8 +398,8 @@ function captureToGallery() {
   }
 
   // --- FILENAME LOGIC ---
-  let itemName = "Aurum Look";
-  let itemFilename = "aurum_look.png";
+  let itemName = "Jewels-Ai Look";
+  let itemFilename = "Jewels-Ai_look.png";
   
   if (currentType && PRELOADED_IMAGES[currentType]) {
       const list = PRELOADED_IMAGES[currentType];
@@ -491,7 +491,7 @@ async function shareSingleSnapshot() {
     if (navigator.share) {
         try {
             await navigator.share({
-                title: 'My Aurum Atelier Look',
+                title: 'My Jewels-Ai Look',
                 text: 'Check out this jewelry I tried on virtually!',
                 files: [file]
             });
@@ -582,7 +582,7 @@ function downloadAllAsZip() {
     text.innerText = "Packaging Collection...";
 
     const zip = new JSZip();
-    const folder = zip.folder("Aurum_Collection");
+    const folder = zip.folder("Jewels-Ai_Collection");
 
     autoSnapshots.forEach((item, index) => {
         const base64Data = item.url.replace(/^data:image\/(png|jpg);base64,/, "");
@@ -592,7 +592,7 @@ function downloadAllAsZip() {
 
     zip.generateAsync({type:"blob"})
     .then(function(content) {
-        saveAs(content, "Aurum_Collection.zip");
+        saveAs(content, "Jewels-Ai_Collection.zip");
 
         spinner.style.display = 'none';
         success.style.display = 'block';
